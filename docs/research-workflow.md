@@ -157,6 +157,20 @@ mkdir -p research_exports/pool
 /tmp/headcount-research review -in research_exports/pool/stream-123456.json -out research_exports/blinded.json
 ```
 
+Export reads the stored observation and its frozen context references in one
+repeatable-read transaction. Both inline storage version 1 and referenced storage
+version 2 produce the same self-contained schema-1 packet. Referenced fields are
+hydrated from immutable canonical bytes; the reader verifies context hashes,
+kind/schema, field ownership and the original full typed-input digest before
+export. Missing/corrupt context, duplicate or inline-plus-reference bindings,
+unsupported formats and identity mismatches fail explicitly. No mutable peer
+cache supplies missing history. The current production writer remains inline.
+
+Offline replay, review, cases, sampling, controls and persistence read portable
+packets only. They do not need the database or a context server after export,
+even if the original snapshot and its context later expire. Preserve selected
+packets privately before retention removes unexported evidence.
+
 Use `-at RFC3339Nano` on export to select an exact stored observation rather than the latest. JSON packets carry a SHA-256 digest of canonical input. This detects accidental changes after export; it is not an authenticated provenance signature. Output files use mode 0600 and exclusive creation. They never overwrite a packet or reviewed labels. Replay uses the current scorer version and records omitted components/groups; the stored original output remains in the exported packet.
 
 Use the blinded packet for reviewers. It excludes the original quotient, detector strengths and score-derived shared-account result. Do not show reviewers scored exports, public rankings or the case-selection rationale before their first review.

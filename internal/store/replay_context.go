@@ -12,6 +12,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ReplayContextHashDomain separates frozen-context identities from packet digests.
+const ReplayContextHashDomain = "headcount.replay-context.v1\x00"
+
 // ReplayContext contains the producer's canonical envelope bytes. The storage
 // boundary verifies identity and envelope metadata; typed encoding belongs to
 // the producer and hydration reader, not a mutable cache or a JSONB round trip.
@@ -38,7 +41,7 @@ func (c ReplayContext) validate() error {
 		return fmt.Errorf("replay context envelope metadata mismatch or empty value")
 	}
 	h := sha256.New()
-	h.Write([]byte("headcount.replay-context.v1\x00"))
+	h.Write([]byte(ReplayContextHashDomain))
 	h.Write(c.Canonical)
 	if hex.EncodeToString(h.Sum(nil)) != c.Digest {
 		return fmt.Errorf("replay context digest mismatch")
