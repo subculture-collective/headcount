@@ -13,6 +13,11 @@ collector, database, volume and backup service retain their native procedures.
 The image still defaults to the collector for those procedures; the reviewed
 API baseline explicitly selects `/usr/local/bin/api`. CI never starts a collector.
 
+The [referenced-replay collector runbook](operations/replay-context-rollout.md)
+records its separate backup/restore, mixed-format and measured rollout gates.
+`REPLAY_CONTEXT_WRITES` defaults to false; API promotion leaves collector mode
+unchanged. Its normal rollback keeps the approved 48-hour/seven-day policy.
+
 ## Data admission
 
 The fixed `scripts/predeploy-ci.py` hook is installed from the exact green merged
