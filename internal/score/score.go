@@ -44,6 +44,7 @@ type Scorer struct {
 	// ends; older streams keep only a summary. Zero disables pruning.
 	ChatterRetention time.Duration
 	ReplayRetention  time.Duration
+	ReplayDetail     time.Duration
 	lastPrune        time.Time
 }
 
@@ -104,16 +105,12 @@ func (s *Scorer) runOnce(ctx context.Context) error {
 		s.log.Info("scored", "final", len(done), "provisional", len(refs)-len(done), "channels", len(channels),
 			"demoted", demoted, "restored", restored)
 	}
-	if (s.ChatterRetention > 0 || s.ReplayRetention > 0) && time.Since(s.lastPrune) > time.Hour {
+	if (s.ChatterRetention > 0) && time.Since(s.lastPrune) > time.Hour {
 		s.lastPrune = time.Now()
 		if s.ChatterRetention > 0 {
 			s.prune(ctx)
 		}
-		if s.ReplayRetention > 0 {
-			if err := s.store.PruneSnapshots(ctx, time.Now().Add(-s.ReplayRetention)); err != nil {
-				s.log.Warn("prune snapshots", "err", err)
-			}
-		}
+
 	}
 	return nil
 }

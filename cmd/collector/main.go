@@ -105,10 +105,17 @@ func main() {
 	scorer := score.New(st, log.With("component", "score"))
 	scorer.ReplayRetention = time.Duration(envInt("REPLAY_RETENTION_DAYS", 7)) * 24 * time.Hour
 	scorer.ChatterRetention = time.Duration(envInt("CHATTER_RETENTION_DAYS", 30)) * 24 * time.Hour
+	// Zero keeps legacy outer expiry; thinning requires a separate native release.
+	scorer.ReplayDetail = time.Duration(envInt("REPLAY_DETAIL_HOURS", 0)) * time.Hour
+	if err := (store.ReplayRetentionPolicy{AsOf: time.Now(), Detail: scorer.ReplayDetail, Retention: scorer.ReplayRetention}).Validate(); err != nil {
+		log.Error("invalid replay retention policy", "err", err)
+		os.Exit(2)
+	}
 
 	go poller.Run(ctx)
 	go collector.Run(ctx)
 	go scorer.Run(ctx)
+	go scorer.RunReplayRetention(ctx)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
