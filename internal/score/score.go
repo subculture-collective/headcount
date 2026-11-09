@@ -45,7 +45,9 @@ type Scorer struct {
 	ChatterRetention time.Duration
 	ReplayRetention  time.Duration
 	ReplayDetail     time.Duration
-	lastPrune        time.Time
+	// ReferencedReplays is deliberately opt-in; zero keeps complete inline rows.
+	ReferencedReplays bool
+	lastPrune         time.Time
 }
 
 func New(s *store.Store, log *slog.Logger) *Scorer {
@@ -335,7 +337,23 @@ func (s *Scorer) scoreStream(ctx context.Context, r store.StreamRef) error {
 	if err := s.store.ReplaceOnsets(ctx, r.ID, r.ChannelID, onsets, Version); err != nil {
 		return err
 	}
-	return s.store.SaveScore(ctx, store.Score{StreamID: r.ID, ChannelID: r.ChannelID, LastSeenAt: r.LastSeenAt, Version: Version, Minutes: len(d.Viewers), Quotient: output.Quotient, Confidence: output.Coverage, Final: r.Ended, Components: output.Components, Evidence: output.Evidence, Peer: output.Peer, Behavior: input.Behavior, SnapshotInput: input, SnapshotOutput: output, ObservedAt: input.ObservedAt})
+	sc := store.Score{StreamID: r.ID, ChannelID: r.ChannelID, LastSeenAt: r.LastSeenAt, Version: Version, Minutes: len(d.Viewers), Quotient: output.Quotient, Confidence: output.Coverage, Final: r.Ended, Components: output.Components, Evidence: output.Evidence, Peer: output.Peer, Behavior: input.Behavior, SnapshotInput: input, SnapshotOutput: output, ObservedAt: input.ObservedAt}
+	if !s.ReferencedReplays {
+		return s.store.SaveScore(ctx, sc)
+	}
+	replay, err := EncodeReplay(input)
+	if err != nil {
+		return err
+	}
+	stats, err := s.store.SaveReferencedScore(ctx, sc, replay)
+	if err != nil {
+		return err
+	}
+	s.log.Info("replay context write", "storage_version", stats.StorageVersion,
+		"snapshot_inserted", stats.SnapshotInserted, "contexts_new", stats.NewContexts,
+		"contexts_reused", stats.ReusedContexts, "snapshot_payload_bytes", stats.SnapshotPayloadBytes,
+		"new_context_payload_bytes", stats.NewContextBytes)
+	return nil
 }
 
 // sharedAccounts describes young authors overlapping tracked channels.

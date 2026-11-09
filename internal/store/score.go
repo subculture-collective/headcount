@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -269,18 +268,25 @@ type Score struct {
 // ErrStaleScore leaves a stream pending when new context invalidates its input.
 var ErrStaleScore = errors.New("score input predates new distribution context")
 
+// SaveScore commits complete inline replay input with its current score and caches.
 func (s *Store) SaveScore(ctx context.Context, sc Score) error {
+	_, err := s.saveScore(ctx, sc, nil)
+	return err
+}
+
+func (s *Store) saveScore(ctx context.Context, sc Score, replay *ReplayWrite) (ReplayWriteStats, error) {
+	var stats ReplayWriteStats
 	comp, err := json.Marshal(sc.Components)
 	if err != nil {
-		return err
+		return ReplayWriteStats{}, err
 	}
 	evidence, err := json.Marshal(sc.Evidence)
 	if err != nil {
-		return err
+		return ReplayWriteStats{}, err
 	}
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
-		return err
+		return ReplayWriteStats{}, err
 	}
 	defer tx.Rollback(ctx)
 	// Serialize with session changes and operator annotations before updating
@@ -288,60 +294,43 @@ func (s *Store) SaveScore(ctx context.Context, sc Score) error {
 	var channelID int64
 	var from, to time.Time
 	if err := tx.QueryRow(ctx, `SELECT channel_id,started_at,last_seen_at FROM streams WHERE id=$1 FOR UPDATE`, sc.StreamID).Scan(&channelID, &from, &to); err != nil {
-		return err
+		return ReplayWriteStats{}, err
 	}
 	if !sc.ObservedAt.IsZero() {
 		var newerContext bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM channel_events
 		 WHERE stream_id=$1 AND kind='distribution_context' AND (detail->>'recorded_at')::timestamptz>$2
 		 AND channel_id=$3 AND ts BETWEEN $4 AND $5)`, sc.StreamID, sc.ObservedAt, channelID, from, to.Add(time.Minute)).Scan(&newerContext); err != nil {
-			return err
+			return ReplayWriteStats{}, err
 		}
 		if newerContext {
-			return ErrStaleScore
+			return ReplayWriteStats{}, ErrStaleScore
 		}
 	}
 	if sc.Behavior != nil {
 		raw, err := json.Marshal(sc.Behavior)
 		if err != nil {
-			return err
+			return ReplayWriteStats{}, err
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO stream_behavior_metrics(stream_id,source_last_seen,metrics) VALUES($1,$2,$3) ON CONFLICT(stream_id) DO UPDATE SET source_last_seen=$2,metrics=$3`, sc.StreamID, sc.LastSeenAt, raw); err != nil {
-			return err
+			return ReplayWriteStats{}, err
 		}
 	}
 	if sc.Peer != nil {
 		p := sc.Peer
 		if _, err := tx.Exec(ctx, `INSERT INTO stream_peer_metrics(stream_id,metric_version,source_last_seen,language,game_id,game_name,median_viewers,chatters_per_k)
  VALUES($1,$8,$2,$3,$4,$5,$6,$7) ON CONFLICT(stream_id) DO UPDATE SET metric_version=$8,source_last_seen=$2,language=$3,game_id=$4,game_name=$5,median_viewers=$6,chatters_per_k=$7`, sc.StreamID, sc.LastSeenAt, p.Language, p.GameID, p.GameName, p.MedianViewers, p.ChattersPerK, PeerMetricVersion); err != nil {
-			return err
+			return ReplayWriteStats{}, err
 		}
 	} else {
 		if _, err := tx.Exec(ctx, `DELETE FROM stream_peer_metrics WHERE stream_id=$1`, sc.StreamID); err != nil {
-			return err
+			return ReplayWriteStats{}, err
 		}
 	}
 	if sc.SnapshotInput != nil {
-		input, err := json.Marshal(sc.SnapshotInput)
+		stats, err = writeReplay(ctx, tx, sc, replay)
 		if err != nil {
-			return err
-		}
-		output, err := json.Marshal(sc.SnapshotOutput)
-		if err != nil {
-			return err
-		}
-		tag, err := tx.Exec(ctx, `INSERT INTO score_snapshots (stream_id,observed_at,version,input,output) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, sc.StreamID, sc.ObservedAt, sc.Version, input, output)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			var same bool
-			if err := tx.QueryRow(ctx, `SELECT input=$4::jsonb AND output=$5::jsonb FROM score_snapshots WHERE stream_id=$1 AND observed_at=$2 AND version=$3`, sc.StreamID, sc.ObservedAt, sc.Version, input, output).Scan(&same); err != nil {
-				return err
-			}
-			if !same {
-				return fmt.Errorf("snapshot identity collision with different evidence")
-			}
+			return ReplayWriteStats{}, err
 		}
 	}
 	if sc.Final {
@@ -350,7 +339,7 @@ func (s *Store) SaveScore(ctx context.Context, sc Score) error {
 		tag, err := tx.Exec(ctx, `UPDATE streams SET scored_at = now()
 			WHERE id = $1 AND ended_at IS NOT NULL AND last_seen_at = $2`, sc.StreamID, sc.LastSeenAt)
 		if err != nil {
-			return err
+			return ReplayWriteStats{}, err
 		}
 		sc.Final = tag.RowsAffected() == 1
 	}
@@ -360,9 +349,12 @@ func (s *Store) SaveScore(ctx context.Context, sc Score) error {
 		ON CONFLICT (stream_id) DO UPDATE SET scored_at = now(), version = $3, minutes = $4, quotient = $5,
 			confidence = $6, components = $7, final = $8,evidence=$9`,
 		sc.StreamID, sc.ChannelID, sc.Version, sc.Minutes, sc.Quotient, sc.Confidence, comp, sc.Final, evidence); err != nil {
-		return err
+		return ReplayWriteStats{}, err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return ReplayWriteStats{}, err
+	}
+	return stats, nil
 }
 
 // UpdateChannelQuotient recomputes a channel's quotient from its last ten

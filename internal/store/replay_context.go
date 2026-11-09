@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -54,20 +55,31 @@ func (c ReplayContext) validate() error {
 // protects the object through reference creation and transaction completion.
 // The caller must roll back on any error; this function never commits.
 func PutReplayContext(ctx context.Context, tx pgx.Tx, c ReplayContext) error {
+	_, _, err := putReplayContext(ctx, tx, c)
+	return err
+}
+
+func putReplayContext(ctx context.Context, tx pgx.Tx, c ReplayContext) (bool, int64, error) {
 	if err := c.validate(); err != nil {
-		return err
+		return false, 0, err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO replay_contexts(digest,kind,context_schema,canonical) VALUES($1,$2,$3,$4) ON CONFLICT(digest) DO NOTHING`, c.Digest, c.Kind, c.Schema, c.Canonical); err != nil {
-		return err
+	tag, err := tx.Exec(ctx, `INSERT INTO replay_contexts(digest,kind,context_schema,canonical) VALUES($1,$2,$3,$4) ON CONFLICT(digest) DO NOTHING`, c.Digest, c.Kind, c.Schema, c.Canonical)
+	if err != nil {
+		return false, 0, err
 	}
 	var stored ReplayContext
-	if err := tx.QueryRow(ctx, `SELECT digest,kind,context_schema,canonical FROM replay_contexts WHERE digest=$1 FOR KEY SHARE`, c.Digest).Scan(&stored.Digest, &stored.Kind, &stored.Schema, &stored.Canonical); err != nil {
-		return err
+	var size int64
+	err = tx.QueryRow(ctx, `SELECT digest,kind,context_schema,canonical,pg_column_size(canonical)::bigint FROM replay_contexts WHERE digest=$1 FOR KEY SHARE`, c.Digest).Scan(&stored.Digest, &stored.Kind, &stored.Schema, &stored.Canonical, &size)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, 0, fmt.Errorf("%w: %w", errReplayContextRace, err)
+	}
+	if err != nil {
+		return false, 0, err
 	}
 	if stored.Kind != c.Kind || stored.Schema != c.Schema || !bytes.Equal(stored.Canonical, c.Canonical) {
-		return fmt.Errorf("replay context collision or corrupt stored content")
+		return false, 0, fmt.Errorf("replay context collision or corrupt stored content")
 	}
-	return nil
+	return tag.RowsAffected() == 1, size, nil
 }
 
 // ReplayIdentity identifies one immutable scoring observation and model version.

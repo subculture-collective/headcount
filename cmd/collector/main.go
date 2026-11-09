@@ -103,6 +103,12 @@ func main() {
 		}
 	}
 	scorer := score.New(st, log.With("component", "score"))
+	referenced, err := strconv.ParseBool(env("REPLAY_CONTEXT_WRITES", "false"))
+	if err != nil {
+		log.Error("invalid REPLAY_CONTEXT_WRITES; expected a boolean")
+		os.Exit(2)
+	}
+	scorer.ReferencedReplays = referenced
 	scorer.ReplayRetention = time.Duration(envInt("REPLAY_RETENTION_DAYS", 7)) * 24 * time.Hour
 	scorer.ChatterRetention = time.Duration(envInt("CHATTER_RETENTION_DAYS", 30)) * 24 * time.Hour
 	// Zero keeps legacy outer expiry; thinning requires a separate native release.

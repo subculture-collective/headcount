@@ -23,9 +23,9 @@ The score and its immutable input/output snapshot are saved together. Reusing th
 The public API role cannot read `score_snapshots` or `user_observations`. The public stream response exposes only the current score, quality metadata, aggregate diagnostics and the three mechanism indices. Existing `confidence` JSON fields are retained for compatibility; the UI calls them observation coverage. A mechanism index is its strongest weighted detector, before the overall single-group cap, and is not a probability.
 
 The [immutable replay-context decision](adr/001-immutable-replay-context.md)
-specifies future reference deduplication and compatibility tests. Current
-production snapshots remain inline until its separate schema, reader, writer,
-and native rollout issues are completed.
+defines reference deduplication and compatibility checks. Collector writes stay
+inline by default; referenced writes require the opt-in flag and a separately
+qualified native release.
 
 `CHATTER_RETENTION_DAYS` defaults to 30 and governs author rows and lookup-history retention. New summaries preserve true totals, creation-date resolution and pending counts. `REPLAY_RETENTION_DAYS` defaults to 7 and governs snapshots, which can be much larger. Zero disables the respective pruning. Cached scalar peer/behavior metrics remain with stream records. Measure database growth before lengthening snapshot retention. Export selected packets before expiry; exports are not automatically pruned.
 
@@ -143,6 +143,55 @@ object or foreign-key race; it must never ignore corruption/collision errors or
 publish a partial input. Exported packets are self-contained and survive normal
 snapshot/context expiry. Unexported expired history cannot be recreated by
 stopping cleanup or restarting an older binary.
+
+### Optional referenced replay writer
+
+`REPLAY_CONTEXT_WRITES` defaults to `false`; invalid boolean values stop collector
+startup. Enable it only through the separately qualified native writer release.
+The flag changes private storage representation, with the same full inputs,
+scorer version, outputs and live cadence.
+
+When enabled, nonempty `peers` and `behavior_peers` arrays use the accepted
+canonical envelopes. `partners`, per-stream evidence, nulls and empty arrays stay
+inline. The writer stores a version-2 fragment and the complete typed-input digest
+when it factors a field; a snapshot with no factored fields stays version 1.
+Current score/cache updates, context creation/reuse, the snapshot and bindings
+commit in one transaction. Context key-share locks last through commit; a missing
+context or its foreign-key race retries the whole transaction at most three times.
+Corruption and evidence collisions fail without publishing partial changes.
+
+An existing snapshot identity compares complete input/output across both formats.
+An identical retry leaves its stored format unchanged, including legacy inline
+rows. A changed context creates a distinct immutable object; no retained payload
+is bulk rewritten. Mutable peer caches supply future observations and cannot
+change an existing referenced replay.
+
+Successful opt-in score writes emit the aggregate `replay context write` event:
+`storage_version`, `snapshot_inserted`, `contexts_new`, `contexts_reused`,
+`snapshot_payload_bytes` and `new_context_payload_bytes`. Byte counters use stored
+compressed datum sizes, exclude relation/index/binding overhead and report only
+committed new bytes. Idempotent retries report no new snapshot/context bytes.
+These counters contain no evidence payload, author identity or credentials.
+
+They describe acknowledged successful commits; use independent stored identities
+and datum totals for release-wide accounting.
+
+The disposable 602-packet qualification cohort (512 v9, 90 v11) used 151,607,984
+inline datum bytes versus 52,507,024 fragment/context bytes, with 338 new context
+objects and 628 reuses. Every complete packet/digest/output matched. That frame is
+control/challenge enriched, not a population-weighted storage forecast. Its
+90-packet v11 subset had only six reuses versus 106 new objects and used
+11,278,879 bytes versus 10,654,756 inline bytes (5.9% more). Factoring an array has
+an initial cost; its benefit depends on actual reuse. Native qualification must
+measure repeated current observations after tiered retention before enabling the
+flag. The mixed historical result is not a current-v11 savings guarantee.
+
+For binary/configuration rollback, disable the flag and retain the additive schema
+and existing retention policy. The compatible collector can resume inline writes
+while referenced rows remain readable through the hydrated export reader. Older
+collectors can also write new inline observations, but their old research tools
+cannot read version-2 fragments directly: use self-contained exports or the
+compatible reader release. Exported packets stay independent of the database.
 
 ## Export and replay
 
