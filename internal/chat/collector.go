@@ -30,6 +30,8 @@ const (
 )
 
 type minuteAgg struct {
+	streamID                                                    int64 // association at collection time, never inferred at flush
+	mixedStreams                                                bool
 	messages, newChatters, firstMsgs, emoteOnly, bans, timeouts int
 	chatters                                                    map[int64]int
 	texts                                                       map[string]int
@@ -290,11 +292,14 @@ func emoteOnly(msg twitch.PrivateMessage) bool {
 }
 
 // agg returns the current minute's aggregate for a channel. Caller holds c.mu.
-func (c *Collector) agg(channelID int64) *minuteAgg {
+func (c *Collector) agg(channelID, streamID int64) *minuteAgg {
 	a, ok := c.aggs[channelID]
 	if !ok {
 		a = newMinuteAgg()
+		a.streamID = streamID
 		c.aggs[channelID] = a
+	} else if a.streamID != streamID {
+		a.mixedStreams = true
 	}
 	return a
 }
@@ -317,7 +322,7 @@ func (c *Collector) onMessage(msg twitch.PrivateMessage, now time.Time) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	a := c.agg(room)
+	a := c.agg(room, streamID)
 	if c.dedup.seen(msg.ID, now) {
 		a.duplicates++
 		return
@@ -426,9 +431,9 @@ func (c *Collector) onClearChat(msg twitch.ClearChatMessage) {
 	case msg.TargetUserID == "":
 		c.events = append(c.events, store.Event{TS: time.Now().UTC(), ChannelID: room, StreamID: c.live.StreamID(room), Kind: "chat_cleared"})
 	case msg.BanDuration == 0:
-		c.agg(room).bans++
+		c.agg(room, c.live.StreamID(room)).bans++
 	default:
-		c.agg(room).timeouts++
+		c.agg(room, c.live.StreamID(room)).timeouts++
 	}
 }
 
@@ -507,6 +512,7 @@ func (c *Collector) flush(ctx context.Context, minute time.Time) {
 		roomHealthy[j.room] = true
 		if _, ok := aggs[j.room]; !ok && c.live.StreamID(j.room) != 0 {
 			aggs[j.room] = newMinuteAgg()
+			aggs[j.room].streamID = c.live.StreamID(j.room)
 		}
 	}
 	c.mu.Unlock()
@@ -517,13 +523,16 @@ func (c *Collector) flush(ctx context.Context, minute time.Time) {
 		total    int
 	)
 	for room, a := range aggs {
-		sid := c.live.StreamID(room)
+		sid := a.streamID
+		if a.mixedStreams {
+			sid = 0
+		}
 		top := 0
 		for _, n := range a.texts {
 			top = max(top, n)
 		}
 		total += a.messages
-		h := roomHealthy[room] && a.delayed == 0
+		h := roomHealthy[room] && a.delayed == 0 && sid != 0 && sid == c.live.StreamID(room)
 		minutes = append(minutes, store.ChatMinute{
 			ChannelID: room, StreamID: sid, Messages: a.messages, UniqueChatters: len(a.chatters),
 			NewChatters: a.newChatters, FirstMsgs: a.firstMsgs, EmoteOnly: a.emoteOnly,

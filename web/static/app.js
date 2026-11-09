@@ -48,22 +48,27 @@ function setTitle(page) {
   document.querySelector('link[rel=canonical]')?.setAttribute('href', location.origin + location.pathname);
 }
 
+let navigation = 0;
 async function route() {
+  const id = ++navigation;
+  const current = () => id === navigation;
+  hideSuggest();
   setActiveNav();
   hideTooltip();
   const parts = location.pathname.split('/').filter(Boolean).map(decodeURIComponent);
   app.innerHTML = '<div class="empty">Loading…</div>';
   try {
-    if (!parts.length) await leaderboardView();
-    else if (parts[0] === 'channel' && parts[1]) await channelView(parts[1]);
-    else if (parts[0] === 'stream' && parts[1]) await streamView(parts[1]);
+    if (!parts.length) await leaderboardView(current);
+    else if (parts[0] === 'channel' && parts[1]) await channelView(parts[1], current);
+    else if (parts[0] === 'stream' && parts[1]) await streamView(parts[1], current);
     else if (parts[0] === 'about') aboutView();
-    else if (parts[0] === 'engagement') await engagementView();
-    else if (parts[0] === 'search') await searchView();
-    else if (parts[0] === 'category' && parts[1]) await categoryView(parts[1]);
+    else if (parts[0] === 'engagement') await engagementView(current);
+    else if (parts[0] === 'search') await searchView(current);
+    else if (parts[0] === 'category' && parts[1]) await categoryView(parts[1], current);
     else if (parts[0] === 'live') { navigate('/?live=1', { replace: true }); return; }
     else notFound();
   } catch (e) {
+    if (!current()) return;
     if (e.status === 404) { notFound(); return; }
     setTitle('Error');
     app.innerHTML = `<div class="empty">Couldn’t load this page: ${esc(e.message)}</div>`;
@@ -109,6 +114,8 @@ const suggest = document.getElementById('search-suggest');
 let suggestTimer, suggestSeq = 0;
 
 function hideSuggest() {
+  suggestSeq++;
+  clearTimeout(suggestTimer);
   suggest.hidden = true;
   searchInput.setAttribute('aria-expanded', 'false');
 }
@@ -138,7 +145,7 @@ async function showSuggest() {
   searchInput.setAttribute('aria-expanded', 'true');
 }
 
-searchInput.addEventListener('input', () => { clearTimeout(suggestTimer); suggestTimer = setTimeout(showSuggest, 200); });
+searchInput.addEventListener('input', () => { hideSuggest(); suggestTimer = setTimeout(showSuggest, 200); });
 searchForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const text = searchInput.value.trim();
@@ -159,12 +166,13 @@ document.addEventListener('keydown', (e) => {
   if (e.key === '/' && !e.target.closest('input, select, textarea')) { e.preventDefault(); searchInput.focus(); searchInput.select(); }
 });
 
-async function searchView() {
+async function searchView(current) {
   const text = (new URLSearchParams(location.search).get('q') || '').trim();
   searchInput.value = text;
   setTitle(text ? `Search: ${text}` : 'Search');
   if (!text) { app.innerHTML = '<h1>Search</h1><div class="empty">Type a channel or category name in the search box.</div>'; return; }
   const res = await api(`/search?q=${encodeURIComponent(text)}`);
+  if (!current()) return;
   app.innerHTML = `
     <h1>Search: “${esc(text)}”</h1>
     <p class="sub">Tracked channels whose name contains the search, and categories tracked channels streamed in the last 90 days.</p>
@@ -192,8 +200,9 @@ async function searchView() {
 
 const FAMILY_NAMES = { social: 'social', creative: 'creative', gambling: 'gambling', sports: 'sports', games: 'game' };
 
-async function categoryView(id) {
+async function categoryView(id, current) {
   const d = await api(`/categories/${encodeURIComponent(id)}`);
+  if (!current()) return;
   setTitle(`${d.game_name}: tracked Twitch channels`);
   app.innerHTML = `
     <h1>${esc(d.game_name)}</h1>
@@ -263,14 +272,16 @@ function boardHash({ live, sort, dir, page }) {
 }
 
 // Sorting, filtering and paging reuse one fetch for a minute instead of refetching every channel.
-let board = null;
+const boards = new Map();
 let scrollToBoard = false;
 
-async function boardData() {
+async function boardData(live) {
+  const board = boards.get(live);
   if (board && Date.now() - board.at < 60_000) return board;
-  const [ov, rows, sparks] = await Promise.all([api('/overview'), api('/channels?limit=2000'), api('/sparklines').catch(() => null)]);
-  board = { at: Date.now(), ov, rows, sparks };
-  return board;
+  const [ov, rows, sparks] = await Promise.all([api('/overview'), api(`/channels?limit=2000${live ? '&live=1' : ''}`), api('/sparklines').catch(() => null)]);
+  const result = { at: Date.now(), ov, rows, sparks };
+  boards.set(live, result);
+  return result;
 }
 
 function pageList(page, pages) {
@@ -283,14 +294,15 @@ function pageList(page, pages) {
   return out;
 }
 
-async function leaderboardView() {
+async function leaderboardView(current) {
   setTitle('');
   const params = boardParams();
-  const { ov, rows: all, sparks } = await boardData();
+  const { ov, rows: all, sparks } = await boardData(params.live);
+  if (!current()) return;
   const sparkEnd = sparks ? sparks.now : 0, sparkStart = sparkEnd - (sparks?.window_minutes ?? 180) * 60;
   const hours = ov.first_sample ? (new Date(ov.last_sample) - new Date(ov.first_sample)) / 3.6e6 : 0;
 
-  const liveCount = all.filter((c) => c.live_stream_id).length;
+  const liveCount = ov.live;
   const key = SORTS[params.sort][1];
   const sign = params.dir === 'asc' ? 1 : -1;
   // Array.sort is stable, so ties keep the API's order (quotient, then viewers). Missing values go last either way.
@@ -336,6 +348,7 @@ async function leaderboardView() {
       <span class="muted small num" aria-live="polite">${rows.length ? `${n(first + 1)}–${n(first + shown.length)} of ${n(rows.length)}` : 'none'}
         ${params.live ? 'live channels' : 'channels'}</span>
     </div>
+    ${all.length === 2000 ? '<p class="muted small">Loaded up to 2,000 channels ordered by score. Sorting and paging apply to this selection; Live only loads live channels separately.</p>' : ''}
     ${sparks ? '<p class="muted small table-note">“Last 3h” shows each channel’s viewers over the past three hours, scaled to its own range; a line that stops early means the channel went offline.</p>' : ''}
     ${shown.length ? `<div class="table-wrap"><table>
       <thead><tr>
@@ -369,8 +382,9 @@ async function leaderboardView() {
 
 // ---------- channel ----------
 
-async function channelView(login) {
+async function channelView(login, current) {
   const { channel: c, streams } = await api(`/channels/${encodeURIComponent(login)}`);
+  if (!current()) return;
   setTitle(`${c.display_name}: Twitch viewers, chat and sus quotient`);
   // The channel quotient averages its last ten scored streams, a live one included.
   const scored = streams.filter((s) => s.quotient != null).slice(0, 10);
@@ -408,11 +422,12 @@ async function channelView(login) {
 
 // ---------- engagement map ----------
 
-async function engagementView() {
+async function engagementView(current) {
   const params = new URLSearchParams(location.search);
   const days = ['1', '7', '14'].includes(params.get('days')) ? params.get('days') : '7';
   setTitle('Twitch chat engagement map');
   const data = await api(`/engagement?days=${days}`);
+  if (!current()) return;
   const langs = [...new Set(data.points.map((p) => p.language).filter(Boolean))]
     .map((l) => [l, data.points.filter((p) => p.language === l).length]).sort((a, b) => b[1] - a[1]);
   const cats = [...new Set(data.points.map((p) => p.game_name).filter(Boolean))]
@@ -499,12 +514,13 @@ function followDeltas(totals) {
   return out;
 }
 
-async function streamView(id) {
+async function streamView(id, current) {
   const [d, onsets, ages] = await Promise.all([
     api(`/streams/${id}`),
     api(`/streams/${id}/onsets`).catch(() => null),
     api(`/streams/${id}/account-ages`).catch(() => null),
   ]);
+  if (!current()) return;
   const s = d.stream;
   const score = d.score;
   setTitle(`${s.display_name} stream, ${new Date(s.started_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}`);

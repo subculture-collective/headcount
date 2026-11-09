@@ -61,7 +61,7 @@ detectors each rate one kind of evidence from 0 to 1:
 | `chat_repetition` | 0.15 | Share of chat matching the most repeated non-command, non-utility message |
 | `start_ramp` | 0.1 | Viewers arrive implausibly fast after going live |
 
-Scoring version 10 groups shared causes conservatively: audience shape, weak
+Scoring version 11 groups shared causes conservatively: audience shape, weak
 spike response and low engagement share an **audience** group; repetition and
 account features share **chat**; net follower anomalies share **follows**. Each
 group contributes its strongest weighted component. Groups combine by noisy-OR,
@@ -106,6 +106,11 @@ residual spread, not confidence intervals for detection. The window selects scor
 updates, capped at the latest 3,000 streams. The page reports actual score-update
 timestamps and truncation; this sample does not represent all Twitch streams.
 Older scores retain their median measurements and have unavailable new summaries.
+Version 11 binds chat minutes and authors to the stream observed at collection
+time. A minute spanning two sessions is marked unhealthy with no guessed author
+attribution. IRC restrictions expire across an unobserved transport gap until
+fresh room state arrives. Follower samples use their observation minute instead
+of the start of a possibly delayed sampling pass.
 
 Restrictions are applied to the affected episode windows. Public settings and
 Shared Chat observations expire after 15 minutes. Known distribution or
@@ -209,15 +214,22 @@ Database tests use `HEADCOUNT_TEST_DATABASE_URL` pointing to a disposable
 TimescaleDB instance. Test packages run sequentially because their isolated
 databases share the cluster-wide API role. The browser check starts and closes
 its own loopback fixture server and Chromium profile; it uses no live data.
+It also exercises stale navigation and search responses, plus live channels
+outside the all-channel selection cap. Offline calibration and probability
+evaluation accept one snapshot per stream; repeated snapshots belong in the
+separate persistence study.
 
-Version 10 needs a native collector release as well as the dashboard API update.
-The API CI deployment does not restart the collector. The existing peer metric
-remains version 1 because its median definition is unchanged; no database
-migration is required. The collector gradually rescores older finished streams,
-which adds summaries and applies the robust baseline. Scores from version 9 and
-10 may coexist during that pass. Retain the previous collector image for rollback;
-replaying a version-9 snapshot with version-10 code is a new evaluation, not an
-exact replay of the old algorithm.
+Version 11 needs a native collector release as well as the dashboard API update.
+The API CI deployment does not restart the collector. Peer metric version 2
+excludes caches built before stream-ownership and IRC
+transport-gap corrections; no database migration is required. The median formula
+is unchanged, but its eligible inputs can differ. Older unversioned snapshot
+peers do not seed a version-11 comparison. The collector gradually rescores
+finished streams and builds fresh peer caches, so independent comparisons may be
+unavailable during that pass. The map retains older version-1 measurements.
+Scores from different versions may coexist. Retain the previous collector image
+for rollback; evaluating an older snapshot with version-11 code is a new
+evaluation, not an exact replay of its old algorithm.
 
 ## Known limits
 

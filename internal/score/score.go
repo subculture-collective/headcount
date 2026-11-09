@@ -20,7 +20,7 @@ import (
 
 // Version increments whenever detector logic or weights change, so old
 // scores can be told apart and recomputed.
-const Version = 10
+const Version = 11
 
 const (
 	liveEvery       = 15 * time.Minute
@@ -245,7 +245,7 @@ func Build(r store.StreamRef, ser store.StreamSeries) detect.StreamData {
 			}
 			valid := at.Sub(e.TS) <= 15*time.Minute
 			if kind == "chat_mode" {
-				valid = d.ChatHealthy[i] && (valid || !e.TS.Before(healthyStart.Add(-time.Minute)))
+				valid = d.ChatHealthy[i] && !e.TS.Before(healthyStart.Add(-time.Minute))
 			}
 			if valid && (latest.TS.IsZero() || e.TS.After(latest.TS)) {
 				latest = e

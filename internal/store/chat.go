@@ -39,7 +39,7 @@ func (s *Store) RecordChat(ctx context.Context, t time.Time, minutes []ChatMinut
 		return err
 	}
 	defer tx.Rollback(ctx)
-	accepted := map[int64]bool{}
+	accepted := map[int64]int64{}
 	if len(minutes) > 0 {
 		n := len(minutes)
 		cols := make([][]int32, 14)
@@ -69,18 +69,18 @@ func (s *Store) RecordChat(ctx context.Context, t time.Time, minutes []ChatMinut
 			SELECT $1, cid, sid, m, u, nc, fm, eo, dt, tt, b, tmo,cmd,util,bot,dup,late,h,delay
 			FROM unnest($2::bigint[], $3::bigint[], $4::int[], $5::int[], $6::int[], $7::int[], $8::int[], $9::int[],
 			            $10::int[], $11::int[], $12::int[], $13::int[],$14::int[],$15::int[],$16::int[],$17::int[], $18::bool[],$19::bigint[]) AS x(cid, sid, m, u, nc, fm, eo, dt, tt, b, tmo,cmd,util,bot,dup,late,h,delay)
-			ON CONFLICT DO NOTHING RETURNING channel_id`,
+			ON CONFLICT DO NOTHING RETURNING channel_id, coalesce(stream_id,0)`,
 			t, channelIDs, streamIDs, cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7], cols[8], cols[9], cols[10], cols[11], cols[12], cols[13], healthy, delay)
 		if err != nil {
 			return err
 		}
 		for written.Next() {
-			var id int64
-			if err := written.Scan(&id); err != nil {
+			var id, streamID int64
+			if err := written.Scan(&id, &streamID); err != nil {
 				written.Close()
 				return err
 			}
-			accepted[id] = true
+			accepted[id] = streamID
 		}
 		err = written.Err()
 		written.Close()
@@ -91,7 +91,7 @@ func (s *Store) RecordChat(ctx context.Context, t time.Time, minutes []ChatMinut
 	if len(chatters) > 0 {
 		filtered := make([]ChatterMinute, 0, len(chatters))
 		for _, c := range chatters {
-			if accepted[c.ChannelID] {
+			if sid, ok := accepted[c.ChannelID]; ok && sid != 0 && sid == c.StreamID {
 				filtered = append(filtered, c)
 			}
 		}

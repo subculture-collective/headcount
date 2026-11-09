@@ -63,6 +63,50 @@ async function clientChecks() {
   // Restore the complete page for visual inspection.
   change('em-lang', '');
   assert(document.documentElement.scrollWidth <= innerWidth, 'page overflows viewport');
+  const { navigate } = await import('/kit.js');
+  const originalFetch = window.fetch;
+  // An old page response (including an error) must not replace newer navigation.
+  for (const fail of [false, true]) {
+    let complete;
+    window.fetch = (input, ...args) => String(input).includes('/api/channels/fixture')
+      ? new Promise((resolve, reject) => { complete = () => fail ? reject(Error('old request failed')) : resolve(new Response(JSON.stringify({
+        channel: { display_name: 'Stale channel', login: 'fixture', first_seen_at: '2026-11-01', tier: 'tracked' }, streams: [],
+      }))); }) : originalFetch(input, ...args);
+    navigate('/channel/fixture'); navigate('/about'); complete();
+    await new Promise((done) => setTimeout(done, 30));
+    assert(document.querySelector('h1')?.textContent === 'How scoring works', 'old page response overwrote newer navigation');
+  }
+  let completeSearch;
+  window.fetch = (input, ...args) => String(input).includes('/api/search?')
+    ? new Promise((resolve) => { completeSearch = () => resolve(new Response(JSON.stringify({ channels: [], categories: [] }))); })
+    : originalFetch(input, ...args);
+  const input = document.getElementById('search-q');
+  input.value = 'fixture'; input.dispatchEvent(new Event('input'));
+  for (let i = 0; !completeSearch && i < 100; i++) await new Promise((r) => setTimeout(r, 20));
+  assert(completeSearch, 'search debounce never requested suggestions');
+  input.value = ''; input.dispatchEvent(new Event('input')); completeSearch();
+  await new Promise((done) => setTimeout(done, 30));
+  assert(document.getElementById('search-suggest').hidden, 'cleared search reopened stale suggestions');
+  // A live channel below the all-channel cap must still appear in Live only.
+  const liveChannel = { id: 'live', login: 'outsidecap', display_name: 'Outside cap live channel', live_stream_id: '10', viewers: 500,
+    live_quotient: 10, live_confidence: 0.5, tier: 'tracked', scored_streams: 1 };
+  const offline = Array.from({ length: 2000 }, (_, i) => ({ ...liveChannel, id: String(i), login: `offline${i}`,
+    display_name: `Offline ${i}`, live_stream_id: null, viewers: null, live_quotient: null, quotient: 50, quotient_confidence: 0.5 }));
+  window.fetch = (input, ...args) => {
+    const url = String(input);
+    const response = url.includes('/api/channels?') ? (url.includes('live=1') ? [liveChannel] : offline)
+      : url.includes('/api/overview') ? { channels: 2001, live: 1, scored_streams: 1, chat_messages_24h: 0 }
+        : url.includes('/api/sparklines') ? null : undefined;
+    return response === undefined ? originalFetch(input, ...args) : Promise.resolve(new Response(JSON.stringify(response)));
+  };
+  navigate('/');
+  for (let i = 0; !document.getElementById('live-only') && i < 100; i++) await new Promise((r) => setTimeout(r, 20));
+  document.getElementById('live-only').click();
+  for (let i = 0; document.querySelector('h1')?.textContent !== 'Leaderboard' && i < 100; i++) await new Promise((r) => setTimeout(r, 20));
+  assert(document.getElementById('app').textContent.includes('Outside cap live channel'), 'Live only lost channels outside the all-channel cap');
+  window.fetch = originalFetch;
+  navigate('/engagement');
+  for (let i = 0; !document.getElementById('em') && i < 100; i++) await new Promise((r) => setTimeout(r, 20));
   const result = document.createElement('pre'); result.id = 'map-check-result'; result.textContent = 'PASS'; document.body.append(result);
 }
 

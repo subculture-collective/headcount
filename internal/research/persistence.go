@@ -2,6 +2,7 @@ package research
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"time"
 
@@ -23,7 +24,7 @@ func Persistence(pool []Packet, cs []Case, target string, threshold, coverage fl
 	if err := ValidateCases(cs); err != nil {
 		return PersistenceReport{}, err
 	}
-	if !slices.Contains(targets, target) || threshold < 0 || threshold > 1 || coverage <= 0 || coverage > 1 {
+	if !slices.Contains(targets, target) || threshold < 0 || threshold > 1 || coverage <= 0 || coverage > 1 || math.IsNaN(threshold) || math.IsNaN(coverage) {
 		return PersistenceReport{}, fmt.Errorf("invalid target, threshold or coverage")
 	}
 	labels := map[int64]Case{}

@@ -58,13 +58,23 @@ func (p *Poller) Init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	seen := map[int64]bool{}
 	for _, o := range open {
+		// OpenStreams orders the newest observation first for each channel.
+		// Repair duplicate open rows left by an interrupted older collector.
+		if seen[o.ChannelID] {
+			if err := p.store.EndStream(ctx, o.ID, o.LastSeen); err != nil {
+				return err
+			}
+			continue
+		}
+		seen[o.ChannelID] = true
 		p.live.Set(live.Stream{
-			StreamID: o.ID, ChannelID: o.ChannelID, Login: o.Login, Title: o.Title,
+			StreamID: o.ID, ChannelID: o.ChannelID, Login: o.Login, Tier: o.Tier, Title: o.Title,
 			GameID: o.GameID, GameName: o.GameName, LastSeen: o.LastSeen,
 		})
 	}
-	p.log.Info("restored open streams", "count", len(open))
+	p.log.Info("restored open streams", "count", len(seen), "closed_stale", len(open)-len(seen))
 	return nil
 }
 
@@ -309,7 +319,7 @@ func (f *followerSampler) trigger(parent context.Context, t time.Time, chans []s
 						continue
 					}
 					mu.Lock()
-					samples = append(samples, store.FollowerSample{ChannelID: id, Total: total})
+					samples = append(samples, store.FollowerSample{ChannelID: id, Total: total, ObservedAt: time.Now().UTC().Truncate(time.Minute)})
 					mu.Unlock()
 				}
 			}()

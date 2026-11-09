@@ -87,6 +87,7 @@ type OpenStream struct {
 	ID        int64
 	ChannelID int64
 	Login     string
+	Tier      string
 	LastSeen  time.Time
 	Title     string
 	GameID    string
@@ -96,10 +97,11 @@ type OpenStream struct {
 
 func (s *Store) OpenStreams(ctx context.Context) ([]OpenStream, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT s.id, s.channel_id, c.login, s.last_seen_at, coalesce(s.title, ''), coalesce(s.game_id, ''),
+		SELECT s.id, s.channel_id, c.login, c.tier, s.last_seen_at, coalesce(s.title, ''), coalesce(s.game_id, ''),
 		       coalesce(s.game_name, ''), s.peak_viewers
 		FROM streams s JOIN channels c ON c.id = s.channel_id
-		WHERE s.ended_at IS NULL`)
+		WHERE s.ended_at IS NULL
+		ORDER BY s.channel_id, s.last_seen_at DESC, s.started_at DESC, s.id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +109,7 @@ func (s *Store) OpenStreams(ctx context.Context) ([]OpenStream, error) {
 	var out []OpenStream
 	for rows.Next() {
 		var o OpenStream
-		if err := rows.Scan(&o.ID, &o.ChannelID, &o.Login, &o.LastSeen, &o.Title, &o.GameID, &o.GameName, &o.Peak); err != nil {
+		if err := rows.Scan(&o.ID, &o.ChannelID, &o.Login, &o.Tier, &o.LastSeen, &o.Title, &o.GameID, &o.GameName, &o.Peak); err != nil {
 			return nil, err
 		}
 		out = append(out, o)
@@ -169,6 +171,12 @@ func (s *Store) RecordLive(ctx context.Context, t time.Time, live []LiveSample) 
 		WHERE c.id = u.id`, t, channelIDs, logins, displays); err != nil {
 		return err
 	}
+	// Session transition and its viewer sample commit together. A crash after
+	// RecordLive must not leave two open streams for the same channel.
+	if _, err := tx.Exec(ctx, `UPDATE streams SET ended_at=last_seen_at
+	 WHERE ended_at IS NULL AND channel_id=ANY($1) AND NOT (id=ANY($2))`, channelIDs, streamIDs); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO streams (id, channel_id, started_at, first_seen_at, last_seen_at, title, game_id, game_name, language, peak_viewers)
 		SELECT sid, cid, st, $1, $1, title, gid, gname, lang, v
@@ -184,6 +192,12 @@ func (s *Store) RecordLive(ctx context.Context, t time.Time, live []LiveSample) 
 			game_name = EXCLUDED.game_name,
 			peak_viewers = GREATEST(streams.peak_viewers, EXCLUDED.peak_viewers)`,
 		t, streamIDs, channelIDs, started, titles, gameIDs, gameNames, langs, viewers); err != nil {
+		return err
+	}
+	// Lock streams before scores, as SaveScore does. A live observation
+	// invalidates a final label immediately rather than waiting for rescoring.
+	if _, err := tx.Exec(ctx, `UPDATE stream_scores SET final=false
+	 WHERE final AND stream_id=ANY($1)`, streamIDs); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -229,8 +243,9 @@ func (s *Store) InsertEvents(ctx context.Context, events []Event) error {
 }
 
 type FollowerSample struct {
-	ChannelID int64
-	Total     int64
+	ChannelID  int64
+	Total      int64
+	ObservedAt time.Time
 }
 
 func (s *Store) InsertFollowerSamples(ctx context.Context, t time.Time, samples []FollowerSample) error {
@@ -238,13 +253,19 @@ func (s *Store) InsertFollowerSamples(ctx context.Context, t time.Time, samples 
 		return nil
 	}
 	ids := make([]int64, len(samples))
+	observed := make([]time.Time, len(samples))
 	totals := make([]int64, len(samples))
 	for i, f := range samples {
 		ids[i], totals[i] = f.ChannelID, f.Total
+		observed[i] = f.ObservedAt
+		if observed[i].IsZero() {
+			observed[i] = t
+		}
+		observed[i] = observed[i].UTC().Truncate(time.Minute)
 	}
 	_, err := s.Pool.Exec(ctx, `
 		INSERT INTO follower_samples (ts, channel_id, total)
-		SELECT $1, id, total FROM unnest($2::bigint[], $3::bigint[]) AS u(id, total)
-		ON CONFLICT DO NOTHING`, t, ids, totals)
+		SELECT ts, id, total FROM unnest($1::timestamptz[], $2::bigint[], $3::bigint[]) AS u(ts, id, total)
+		ON CONFLICT DO NOTHING`, observed, ids, totals)
 	return err
 }

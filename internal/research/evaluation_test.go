@@ -1,7 +1,10 @@
 package research
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,6 +36,42 @@ func fixture(id int64, split string, at time.Time, positive bool) Case {
 		return Review{Reviewer: name, Labels: map[string]string{"audience": "indeterminate", "chat": label, "follows": "ordinary"}, Sources: []string{"synthetic software fixture"}}
 	}
 	return Case{ID: digest, Input: in, Digest: digest, Split: split, Stratum: "synthetic", InclusionProbability: 1, Reviews: []Review{review("one"), review("two")}}
+}
+
+func TestLegacyPeerPacketChecksumRemainsReadable(t *testing.T) {
+	c := fixture(1, "development", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), false)
+	c.Input.Peers = []store.PeerStat{{StreamID: 20, ChannelID: 2, MedianViewers: 1000, ChattersPerK: 2}}
+	raw, err := json.Marshal(c.Input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Version-10 peers had no MetricVersion field in their canonical bytes.
+	legacy := strings.ReplaceAll(string(raw), `"MetricVersion":0,`, "")
+	hash := sha256.Sum256([]byte(legacy))
+	p := Packet{Input: c.Input, Digest: fmt.Sprintf("%x", hash)}
+	if err = p.Verify(); err != nil {
+		t.Fatalf("legacy peer metadata broke its immutable checksum: %v", err)
+	}
+}
+
+func TestCalibrationRejectsRepeatedStreamSnapshots(t *testing.T) {
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	a, b := fixture(1, "calibration", at, false), fixture(2, "calibration", at, true)
+	duplicate := a
+	duplicate.ID = "later snapshot"
+	duplicate.Input.ObservedAt = duplicate.Input.ObservedAt.Add(time.Minute)
+	duplicate.Digest, _ = Digest(duplicate.Input)
+	if _, err := FitCalibration([]Case{a, b, duplicate}, "chat", .1); err == nil {
+		t.Fatal("repeated stream snapshots were independent calibration cases")
+	}
+}
+
+func TestPersistenceRejectsNonfiniteThresholds(t *testing.T) {
+	for _, tt := range []struct{ threshold, coverage float64 }{{math.NaN(), .1}, {.3, math.NaN()}} {
+		if _, err := Persistence(nil, nil, "chat", tt.threshold, tt.coverage); err == nil {
+			t.Fatal("nonfinite threshold produced a report")
+		}
+	}
 }
 func TestPacketIntegrityBlindReviewAndNoOverwrite(t *testing.T) {
 	c := fixture(1, "development", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), true)

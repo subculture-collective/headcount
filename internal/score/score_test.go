@@ -166,10 +166,35 @@ func TestEpisodeContextAndHealth(t *testing.T) {
 	}
 }
 
+func TestIRCRestrictionExpiresAcrossTransportGap(t *testing.T) {
+	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	healthy := true
+	r := store.StreamRef{StartedAt: at, FirstSeenAt: at, LastSeenAt: at.Add(4 * time.Minute)}
+	ser := store.StreamSeries{Events: []store.EventPoint{{TS: at, Kind: "chat_mode", Detail: map[string]any{"subs-only": 1}}}}
+	for _, i := range []int{0, 1, 3, 4} {
+		ser.Chat = append(ser.Chat, store.ChatPoint{TS: at.Add(time.Duration(i) * time.Minute), Healthy: &healthy})
+	}
+	d := Build(r, ser)
+	if !d.RestrictedMinutes[1] || d.RestrictedMinutes[3] {
+		t.Fatalf("IRC mode survived an unobserved transport gap: %v", d.RestrictedMinutes)
+	}
+	ser.Events = append(ser.Events, store.EventPoint{TS: at.Add(4 * time.Minute), Kind: "chat_mode", Detail: map[string]any{"subs-only": 1}})
+	if !Build(r, ser).RestrictedMinutes[4] {
+		t.Fatal("fresh room confirmation ignored")
+	}
+}
+
 func TestPeerSelectionExcludesSelfFutureAndRepeatedChannels(t *testing.T) {
 	at := time.Now().UTC()
 	r := store.StreamRef{ChannelID: 1, StartedAt: at}
-	peers := []store.PeerStat{{ChannelID: 1, EndedAt: at.Add(-time.Hour)}, {ChannelID: 2, EndedAt: at.Add(time.Hour)}, {ChannelID: 3, EndedAt: at.Add(-time.Hour), MedianViewers: 100}, {ChannelID: 3, EndedAt: at.Add(-2 * time.Hour), MedianViewers: 200}}
+	peers := []store.PeerStat{
+		{MetricVersion: store.PeerMetricVersion, ChannelID: 1, EndedAt: at.Add(-time.Hour)},
+		{MetricVersion: store.PeerMetricVersion, ChannelID: 2, EndedAt: at.Add(time.Hour)},
+		{MetricVersion: store.PeerMetricVersion, ChannelID: 3, EndedAt: at.Add(-time.Hour), MedianViewers: 100},
+		{MetricVersion: store.PeerMetricVersion, ChannelID: 3, EndedAt: at.Add(-2 * time.Hour), MedianViewers: 200},
+		{MetricVersion: 1, ChannelID: 4, EndedAt: at.Add(-time.Hour), MedianViewers: 100},
+		{ChannelID: 5, EndedAt: at.Add(-time.Hour), MedianViewers: 100},
+	}
 	p := selectPeers(peers, r)
 	if len(p) != 1 || p[0].MedianViewers != 100 {
 		t.Fatalf("leaking peers: %+v", p)
