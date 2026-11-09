@@ -40,6 +40,29 @@ func TestBuildAlignsSeriesAndChatModes(t *testing.T) {
 	}
 }
 
+func TestActivitySummaryWithoutPeers(t *testing.T) {
+	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	healthy := true
+	in := Snapshot{Ref: store.StreamRef{ID: 1, ChannelID: 1, StartedAt: at, FirstSeenAt: at, LastSeenAt: at.Add(59 * time.Minute)}}
+	for i := range 60 {
+		ts := at.Add(time.Duration(i) * time.Minute)
+		in.Series.Viewers = append(in.Series.Viewers, store.ViewerPoint{TS: ts, Viewers: 500})
+		chatters, messages := 0, 0
+		if i%3 == 0 {
+			chatters, messages = 5, 10
+		}
+		in.Series.Chat = append(in.Series.Chat, store.ChatPoint{TS: ts, Healthy: &healthy, Chatters: chatters, Messages: messages})
+	}
+	out := Evaluate(in, nil)
+	c := out.Components["chat_engagement"]
+	if c.Available || c.Values["chatters_per_k"] != 0 || c.Values["eligible_messages"] != 200 || c.Values["silent_minutes"] != 40 || math.Abs(c.Values["aggregate_per_k"]-10.0/3) > 1e-9 {
+		t.Fatalf("summary discarded or scored without peers: %+v", c)
+	}
+	if _, exists := c.Values["z"]; exists {
+		t.Fatal("invented scorer residual")
+	}
+}
+
 func TestBaselineZ(t *testing.T) {
 	var peers []store.PeerStat
 	for i := range 40 {

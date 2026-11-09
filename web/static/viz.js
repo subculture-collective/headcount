@@ -37,28 +37,30 @@ function logTicks(lo, hi) {
   return out;
 }
 
-const fmtTick = (v) => (v < 1 ? String(+v.toFixed(2)) : compact(v));
+const engagementValue = (v) => v == null ? '–' : v === 0 ? '0' : String(+v.toPrecision(3));
+const fmtTick = (v) => (v < 1 ? String(+v.toPrecision(2)) : compact(v));
 
 // ---------- engagement map ----------
 
-export function renderEngagementMap(container, data, lang, cat = '') {
+export function renderEngagementMap(container, data, lang, cat = '', metric = 'median') {
+  const aggregate = metric === 'aggregate';
+  const rate = (p) => aggregate ? p.aggregate_per_k : p.chatters_per_k;
   const pts = data.points.filter((p) => (!lang || p.language === lang) && (!cat || p.game_name === cat))
-    .filter((p) => p.median_viewers > 0 && p.chatters_per_k != null);
-  const own = cat ? data.fits[`cat:${cat}`] : data.fits[lang];
-  const fit = own || data.fits[lang] || data.fits[''];
-  const fitNote = (lang || cat) && !own && fit ? `too few streams for a separate ${cat ? 'category' : 'language'} line; showing the ${cat && data.fits[lang] ? 'language' : 'all-stream'} line` : '';
+    .filter((p) => Number.isFinite(p.median_viewers) && p.median_viewers > 0 && Number.isFinite(rate(p)) && rate(p) >= 0);
+  const key = lang && cat ? `selection:${JSON.stringify([lang, cat])}` : cat ? `cat:${cat}` : lang;
+  const fit = (aggregate ? data.aggregate_fits : data.fits)?.[key];
   container.innerHTML = '';
   if (!pts.length) {
-    container.innerHTML = '<div class="empty">No scored streams with chat data in this window.</div>';
+    container.innerHTML = '<div class="empty">No measurements for this selection. Aggregate activity is available after a stream is scored with the activity summary.</div>';
     return;
   }
   const legend = document.createElement('div');
   legend.className = 'legend';
-  legend.innerHTML = `<span class="muted">Stream quotient</span>
+  legend.innerHTML = `<span class="muted">Uncalibrated stream quotient</span>
     ${BANDS.slice().reverse().map((b) => `<span><svg class="key" width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" class="pt ${b.cls}"/></svg>${b.label}</span>`).join('')}
     <span><svg class="key" width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4" class="pt q3 provisional"/></svg>provisional (still live)</span>
-    ${fit ? `<span><i style="background:var(--text-muted)"></i>expected for audience size</span>
-    <span><i class="band"></i>typical range (±1 and ±2 SD)</span>` : ''}`;
+    ${fit ? `<span><i style="background:var(--text-muted)"></i>reference among displayed streams</span>
+    <span><i class="band"></i>residual spread (±1 and ±2 SD)</span>` : ''}`;
   container.appendChild(legend);
   if (!fit) {
     const p = document.createElement('p');
@@ -66,11 +68,22 @@ export function renderEngagementMap(container, data, lang, cat = '') {
     p.textContent = 'Engagement measurements are shown. There are too few usable streams for a reference line in this selection.';
     container.appendChild(p);
   }
-  if (fitNote) {
-    const p = document.createElement('p');
-    p.className = 'muted small';
-    p.textContent = `Line: ${fitNote}.`;
-    container.appendChild(p);
+  const note = document.createElement('p');
+  note.className = 'muted small';
+  const zeroCount = pts.filter((p) => rate(p) === 0).length;
+  note.textContent = `${zeroCount} ${zeroCount === 1 ? 'stream has' : 'streams have'} zero ${aggregate ? 'aggregate activity' : 'median activity'}. Zero values occupy a separate row below the positive log scale. ${aggregate ? 'Aggregate activity counts chat-author minutes per 1,000 viewer-minutes; it does not change the score.' : 'A zero median means at least half the eligible minutes had no chatters; chat can still be active in other minutes.'}`;
+  container.appendChild(note);
+  if (aggregate && pts.length < data.points.filter((p) => (!lang || p.language === lang) && (!cat || p.game_name === cat)).length) {
+    const missing = document.createElement('p');
+    missing.className = 'muted small';
+    missing.textContent = 'Streams without the newer activity summary are omitted from this view; their median measurements remain available.';
+    container.appendChild(missing);
+  }
+  if (fit) {
+    const ref = document.createElement('p');
+    ref.className = 'muted small';
+    ref.textContent = `Reference: ${fit.n} retained streams, using the latest measured stream per channel in this selection. Bands describe residual spread, not detection confidence.`;
+    container.appendChild(ref);
   }
 
   const wrap = document.createElement('div');
@@ -80,15 +93,18 @@ export function renderEngagementMap(container, data, lang, cat = '') {
   const height = width < 600 ? 360 : 480;
   const m = { l: 52, r: 16, t: 12, b: 40 };
   const pw = width - m.l - m.r, ph = height - m.t - m.b;
-  const yv = (p) => Math.max(0.1, p);
-  const xs = pts.map((p) => p.median_viewers), ys = pts.map((p) => yv(p.chatters_per_k));
+  const positiveHeight = ph - 42;
+  const zeroY = m.t + ph - 8;
+  const xs = pts.map((p) => p.median_viewers), ys = pts.map(rate).filter((v) => v > 0);
   const xlo = Math.min(...xs) / 1.25, xhi = Math.max(...xs) * 1.25;
-  const ylo = Math.min(...ys) / 1.5, yhi = Math.max(...ys) * 1.5;
+  const ylo = ys.length ? Math.min(...ys) / 1.5 : 0.1;
+  const yhi = ys.length ? Math.max(...ys) * 1.5 : 1;
   const x = (v) => m.l + ((Math.log10(v) - Math.log10(xlo)) / (Math.log10(xhi) - Math.log10(xlo))) * pw;
-  const y = (v) => m.t + ph - ((Math.log10(yv(v)) - Math.log10(ylo)) / (Math.log10(yhi) - Math.log10(ylo))) * ph;
+  const y = (v) => v === 0 ? zeroY : m.t + positiveHeight - ((Math.log10(v) - Math.log10(ylo)) / (Math.log10(yhi) - Math.log10(ylo))) * positiveHeight;
+  const fitY = (v) => y(Math.max(ylo, v));
   const svg = makeSvg(wrap, width, height,
-    `Scatter of ${pts.length} streams: median viewers against unique chatters per 1,000 viewers, both on log scales`);
-  el('clipPath', { id: 'em-clip' }, el('defs', {}, svg)).appendChild(el('rect', { x: m.l, y: m.t, width: pw, height: ph }));
+    `Scatter of ${pts.length} streams: median viewers against ${aggregate ? 'chat-author minutes per 1,000 viewer-minutes' : 'median chatters per minute per 1,000 viewers'}, with a separate zero row below the positive log scale`);
+  el('clipPath', { id: 'em-clip' }, el('defs', {}, svg)).appendChild(el('rect', { x: m.l, y: m.t, width: pw, height: positiveHeight }));
 
   const axis = el('g', { class: 'axis' }, svg);
   for (const tv of logTicks(ylo, yhi)) {
@@ -97,12 +113,15 @@ export function renderEngagementMap(container, data, lang, cat = '') {
   }
   const xt = logTicks(xlo, xhi);
   for (const tv of xt) {
-    el('line', { class: 'gridline', x1: x(tv), x2: x(tv), y1: m.t, y2: m.t + ph }, axis);
+    el('line', { class: 'gridline', x1: x(tv), x2: x(tv), y1: m.t, y2: m.t + positiveHeight }, axis);
     el('text', { x: x(tv), y: height - m.b + 16, 'text-anchor': 'middle' }, axis).textContent = fmtTick(tv);
   }
   el('text', { x: m.l + pw / 2, y: height - 4, 'text-anchor': 'middle', class: 'axis-title' }, axis).textContent = 'Median concurrent viewers (log scale)';
   el('text', { x: 12, y: m.t + ph / 2, 'text-anchor': 'middle', class: 'axis-title', transform: `rotate(-90 12 ${m.t + ph / 2})` }, axis)
-    .textContent = 'Unique chatters per 1,000 viewers (log)';
+    .textContent = aggregate ? 'Chat-author min / 1k viewer-min' : 'Median chatters/min / 1k viewers';
+  el('line', { class: 'gridline', x1: m.l, x2: width - m.r, y1: zeroY - 14, y2: zeroY - 14 }, axis);
+  el('text', { x: m.l - 6, y: zeroY + 4, 'text-anchor': 'end' }, axis).textContent = '0';
+  el('text', { x: width - m.r, y: zeroY - 19, 'text-anchor': 'end', class: 'annot' }, axis).textContent = 'zero (outside log scale)';
 
   const expect = fit ? (v, k = 0) => Math.exp(fit.a + fit.slope * Math.log(v) + k * fit.sd) - 0.1 : null;
   if (fit) {
@@ -112,19 +131,19 @@ export function renderEngagementMap(container, data, lang, cat = '') {
     const band = (k) => {
       const up = [], dn = [];
       for (let i = 0; i <= steps; i++) {
-        up.push(`${x(at(i)).toFixed(1)},${y(expect(at(i), k)).toFixed(1)}`);
-        dn.push(`${x(at(i)).toFixed(1)},${y(expect(at(i), -k)).toFixed(1)}`);
+        up.push(`${x(at(i)).toFixed(1)},${fitY(expect(at(i), k)).toFixed(1)}`);
+        dn.push(`${x(at(i)).toFixed(1)},${fitY(expect(at(i), -k)).toFixed(1)}`);
       }
       return `M${up.join('L')}L${dn.reverse().join('L')}Z`;
     };
     el('path', { d: band(2), class: 'fit-band outer' }, g);
     el('path', { d: band(1), class: 'fit-band' }, g);
     const line = [];
-    for (let i = 0; i <= steps; i++) line.push(`${i ? 'L' : 'M'}${x(at(i)).toFixed(1)},${y(expect(at(i))).toFixed(1)}`);
+    for (let i = 0; i <= steps; i++) line.push(`${i ? 'L' : 'M'}${x(at(i)).toFixed(1)},${fitY(expect(at(i))).toFixed(1)}`);
     el('path', { d: line.join(''), class: 'fit-line' }, g);
     // Plain-language note in the empty lower right, under the band.
-    const ny = Math.min(m.t + ph - 10, y(expect(xhi / 1.6, -2)) + 26);
-    if (ny < m.t + ph - 4 && width >= 600) {
+    const ny = Math.min(m.t + positiveHeight - 10, fitY(expect(xhi / 1.6, -2)) + 26);
+    if (ny < m.t + positiveHeight - 4 && width >= 600) {
       el('text', { x: width - m.r - 6, y: ny, 'text-anchor': 'end', class: 'annot' }, svg)
         .textContent = 'below the band: big audience, quiet chat';
     }
@@ -136,14 +155,14 @@ export function renderEngagementMap(container, data, lang, cat = '') {
   const nodes = [];
   for (const i of order) {
     const p = pts[i];
-    const cx = x(p.median_viewers), cy = y(p.chatters_per_k);
+    const cx = x(p.median_viewers), cy = y(rate(p));
     const b = bandOf(p.quotient);
-    const c = el('circle', { cx, cy, r: p.quotient >= 75 ? 5.5 : 4.5, class: `pt ${b.cls}${p.final ? '' : ' provisional'}` }, layer);
+    const c = el('circle', { cx, cy, r: p.quotient >= 75 ? 5.5 : 4.5, 'data-stream-id': p.stream_id, 'data-rate': rate(p), class: `pt ${b.cls}${p.final ? '' : ' provisional'}` }, layer);
     nodes[i] = c;
     if (animate) {
       // Each point starts on the expected line and settles at its actual
       // value, so the distance it travels is its gap from expected.
-      c.style.transform = `translateY(${(y(expect(p.median_viewers)) - cy).toFixed(1)}px)`;
+      c.style.transform = `translateY(${(fitY(expect(p.median_viewers)) - cy).toFixed(1)}px)`;
       c.style.transitionDelay = `${Math.round(((cx - m.l) / pw) * 500)}ms`;
     }
   }
@@ -156,7 +175,7 @@ export function renderEngagementMap(container, data, lang, cat = '') {
     const px = svgX(svg, width, ev), py = svgY(svg, height, ev);
     let best = -1, bd = (12 / scale()) ** 2 * 4; // 24px target
     for (let i = 0; i < pts.length; i++) {
-      const dx = x(pts[i].median_viewers) - px, dy = y(pts[i].chatters_per_k) - py;
+      const dx = x(pts[i].median_viewers) - px, dy = y(rate(pts[i])) - py;
       const d = dx * dx + dy * dy;
       if (d < bd) { bd = d; best = i; }
     }
@@ -173,11 +192,16 @@ export function renderEngagementMap(container, data, lang, cat = '') {
     const p = pts[i];
     showTooltip(ev, `<div class="t"><b>${esc(p.display_name)}</b> · ${dateTime(p.started_at)}${p.game_name ? ` · ${esc(p.game_name)}` : ''}</div>
       ${tipRow('transparent', 'Median viewers', n(p.median_viewers))}
-      ${tipRow('transparent', 'Chatters per 1k viewers', dec(p.chatters_per_k))}
-      ${p.expected_per_k != null ? tipRow('transparent', 'Expected per 1k (scorer)', dec(p.expected_per_k)) : ''}
+      ${tipRow('transparent', 'Median chatters/min per 1k viewers', engagementValue(p.chatters_per_k))}
+      ${p.aggregate_per_k != null ? tipRow('transparent', 'Chat-author min per 1k viewer-min', engagementValue(p.aggregate_per_k)) : '<div class="muted small">Activity summary unavailable for this older score.</div>'}
+      ${p.eligible_minutes != null ? tipRow('transparent', 'Eligible minutes', n(p.eligible_minutes)) : ''}
+      ${p.silent_minutes != null && p.eligible_minutes > 0 ? tipRow('transparent', 'Silent eligible minutes', `${n(p.silent_minutes)} (${pct(p.silent_minutes / p.eligible_minutes)})`) : ''}
+      ${p.eligible_messages != null ? tipRow('transparent', 'Messages in eligible minutes', n(p.eligible_messages)) : ''}
+      ${p.expected_per_k != null ? tipRow('transparent', 'Expected median per 1k (scorer)', engagementValue(p.expected_per_k)) : ''}
       ${p.expected_per_k == null ? '<div class="muted small">Scorer comparison unavailable: insufficient independent past peers.</div>' : ''}
-      ${p.z != null ? tipRow('transparent', 'Distance from expected', `${dec(p.z)} SD`) : ''}
+      ${p.z != null ? tipRow('transparent', 'Median distance from scorer expectation', `${dec(p.z)} SD`) : ''}
       ${tipRow('transparent', `Quotient${p.final ? '' : ' (provisional)'}`, `${q(p.quotient)} · ${pct(p.confidence)} coverage`)}
+      <div class="muted small">Uncalibrated anomaly index, not a bot probability or fake-audience share. Score version ${n(p.score_version)}.</div>
       <div class="muted small">${esc(p.language || 'unknown language')} · click to open</div>`);
   });
   hit.addEventListener('pointerleave', () => {
@@ -194,12 +218,12 @@ export function renderEngagementMap(container, data, lang, cat = '') {
   const low = pts.filter((p) => p.z != null).sort((a, b) => a.z - b.z).slice(0, 15);
   const det = document.createElement('details');
   det.className = 'table-view';
-  det.innerHTML = `<summary>Table: the ${low.length} streams furthest below expected</summary>
-    <table><thead><tr><th>Channel</th><th>Language</th><th class="r">Median viewers</th><th class="r">Chatters / 1k</th>
+  det.innerHTML = `<summary>Table: the ${low.length} streams furthest below the scorer’s median expectation</summary>
+    <table><thead><tr><th>Channel</th><th>Language</th><th class="r">Median viewers</th><th class="r">Median chatters/min / 1k</th>
       <th class="r">Expected / 1k</th><th class="r">SD from expected</th><th class="r">Quotient</th></tr></thead>
     <tbody>${low.map((p) => `<tr data-href="/stream/${p.stream_id}"><td><a href="/stream/${p.stream_id}">${esc(p.display_name)}</a></td>
-      <td>${esc(p.language)}</td><td class="r num">${n(p.median_viewers)}</td><td class="r num">${dec(p.chatters_per_k)}</td>
-      <td class="r num">${dec(p.expected_per_k)}</td><td class="r num">${dec(p.z)}</td><td class="r num">${q(p.quotient)}</td></tr>`).join('')}</tbody></table>`;
+      <td>${esc(p.language)}</td><td class="r num">${n(p.median_viewers)}</td><td class="r num">${engagementValue(p.chatters_per_k)}</td>
+      <td class="r num">${engagementValue(p.expected_per_k)}</td><td class="r num">${dec(p.z)}</td><td class="r num">${q(p.quotient)}</td></tr>`).join('')}</tbody></table>`;
   container.appendChild(det);
   det.querySelectorAll('tbody tr').forEach((tr) => tr.addEventListener('click', () => { navigate(tr.dataset.href); }));
 }

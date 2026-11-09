@@ -20,7 +20,7 @@ import (
 
 // Version increments whenever detector logic or weights change, so old
 // scores can be told apart and recomputed.
-const Version = 9
+const Version = 10
 
 const (
 	liveEvery       = 15 * time.Minute

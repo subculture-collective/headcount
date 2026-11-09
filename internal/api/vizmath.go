@@ -3,88 +3,21 @@ package api
 import (
 	"math"
 	"sort"
+
+	"git.subcult.tv/subculture-collective/headcount/internal/detect"
 )
 
-// engagementFit is a log-log line through scored streams:
-// log(chatters per 1k + 0.1) = A + Slope*log(median viewers), with residual
-// standard deviation SD. It mirrors the scorer's baseline fit (including the
-// outlier refit) so the engagement map can draw a comparable line; the
-// scorer's own fit uses per-minute peer samples, so the two can differ a little.
-type engagementFit struct {
-	A     float64 `json:"a"`
-	Slope float64 `json:"slope"`
-	SD    float64 `json:"sd"`
-	N     int     `json:"n"`
-}
+// engagementFit uses the same robust fitting procedure as the scorer, but
+// describes only the selected displayed population, one stream per channel.
+type engagementFit = detect.EngagementFit
 
 const (
 	minFitGlobal = 20
 	minFitLang   = 15
 )
 
-// fitEngagement fits the log-log line, or returns false when there are fewer
-// than minN usable points or the residuals are degenerate.
 func fitEngagement(viewers, perK []float64, minN int) (engagementFit, bool) {
-	xs := make([]float64, 0, len(viewers))
-	ys := make([]float64, 0, len(viewers))
-	for i, v := range viewers {
-		if v <= 0 || perK[i] < 0 || math.IsNaN(v) || math.IsNaN(perK[i]) {
-			continue
-		}
-		xs = append(xs, math.Log(v))
-		ys = append(ys, math.Log(perK[i]+0.1))
-	}
-	if len(xs) < minN {
-		return engagementFit{}, false
-	}
-	a, slope := olsFit(xs, ys)
-	sd := residSD(xs, ys, a, slope)
-	var fx, fy []float64
-	for i := range xs {
-		if math.Abs(ys[i]-(a+slope*xs[i])) <= 2.5*sd {
-			fx = append(fx, xs[i])
-			fy = append(fy, ys[i])
-		}
-	}
-	n := len(xs)
-	if len(fx) >= minN {
-		a, slope = olsFit(fx, fy)
-		sd = residSD(fx, fy, a, slope)
-		n = len(fx)
-	}
-	if !(sd > 0) {
-		return engagementFit{}, false
-	}
-	return engagementFit{A: a, Slope: slope, SD: sd, N: n}, true
-}
-
-func olsFit(xs, ys []float64) (a, slope float64) {
-	n := float64(len(xs))
-	var sx, sy, sxx, sxy float64
-	for i := range xs {
-		sx += xs[i]
-		sy += ys[i]
-		sxx += xs[i] * xs[i]
-		sxy += xs[i] * ys[i]
-	}
-	den := n*sxx - sx*sx
-	if den == 0 {
-		return sy / n, 0
-	}
-	slope = (n*sxy - sx*sy) / den
-	return (sy - slope*sx) / n, slope
-}
-
-func residSD(xs, ys []float64, a, slope float64) float64 {
-	if len(xs) < 3 {
-		return 0
-	}
-	var ss float64
-	for i := range xs {
-		r := ys[i] - (a + slope*xs[i])
-		ss += r * r
-	}
-	return math.Sqrt(ss / float64(len(xs)-2))
+	return detect.FitEngagement(viewers, perK, minN)
 }
 
 // onsetPartner is another channel's spike onsets inside a stream's window.

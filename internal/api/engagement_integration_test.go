@@ -82,4 +82,67 @@ func TestEngagementWithoutScorerBaseline(t *testing.T) {
 	if len(data.Fits) != 0 {
 		t.Fatal("small sample invented a reference fit")
 	}
+	// New summaries remain available independently of a scorer comparison;
+	// historical measurements keep explicit null summaries.
+	_, err = st.Pool.Exec(ctx, `
+ INSERT INTO streams(id,channel_id,started_at,first_seen_at,last_seen_at) VALUES(4,1,now()-interval '3 hours',now()-interval '3 hours',now());
+ INSERT INTO stream_scores(stream_id,channel_id,scored_at,version,minutes,quotient,confidence,components)
+ VALUES(4,1,now()-interval '1 hour',10,60,0,0.5,'{"chat_engagement":{"available":false,"values":{"median_viewers":500,"chatters_per_k":0,"aggregate_per_k":3.333,"eligible_minutes":60,"silent_minutes":40,"eligible_messages":200}}}');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.cache = nil
+	w = get(t, s.Handler(), "/api/engagement?days=7")
+	var payload struct {
+		Points    []engagementPoint `json:"points"`
+		Truncated bool              `json:"truncated"`
+	}
+	if err = json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != 200 || len(payload.Points) != 2 {
+		t.Fatalf("summary endpoint: %d %s", w.Code, w.Body.String())
+	}
+	old, newer := payload.Points[0], payload.Points[1]
+	if old.AggregatePerK != nil || newer.AggregatePerK == nil || *newer.AggregatePerK != 3.333 || newer.EligibleMinutes == nil || *newer.EligibleMinutes != 60 || newer.ExpectedPerK != nil {
+		t.Fatalf("legacy/null summary or peer-independent metrics changed: %+v %+v", old, newer)
+	}
+	// Fetch one extra row to distinguish an exact cap from truncation.
+	_, err = st.Pool.Exec(ctx, `
+ INSERT INTO streams(id,channel_id,started_at,first_seen_at,last_seen_at) SELECT i,1,now(),now(),now() FROM generate_series(100,3097) i;
+ INSERT INTO stream_peer_metrics(stream_id,metric_version,source_last_seen,language,game_id,game_name,median_viewers,chatters_per_k)
+ SELECT i,1,now(),'en','1','Example',500,12 FROM generate_series(100,3097) i;
+ INSERT INTO stream_scores(stream_id,channel_id,scored_at,version,minutes,quotient,confidence,components)
+ SELECT i,1,now(),10,60,0,0.5,'{}'::jsonb FROM generate_series(100,3097) i;`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, extra := range []bool{false, true} {
+		if extra {
+			_, err = st.Pool.Exec(ctx, `INSERT INTO stream_peer_metrics(stream_id,metric_version,source_last_seen,language,game_id,game_name,median_viewers,chatters_per_k)
+    VALUES(3,1,now(),'en','1','Example',500,12)`)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		s.cache = nil
+		w = get(t, s.Handler(), "/api/engagement?days=7")
+		var capped struct {
+			Points    []engagementPoint `json:"points"`
+			Truncated bool              `json:"truncated"`
+			Sample    struct {
+				Oldest   *time.Time `json:"oldest_scored_at"`
+				Newest   *time.Time `json:"newest_scored_at"`
+				Channels int        `json:"channels"`
+			} `json:"sample"`
+			Fits map[string]engagementFit `json:"fits"`
+		}
+		if err = json.Unmarshal(w.Body.Bytes(), &capped); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != 200 || len(capped.Points) != engagementLimit || capped.Truncated != extra || capped.Sample.Oldest == nil || capped.Sample.Newest == nil || capped.Sample.Channels != 1 || len(capped.Fits) != 0 {
+			t.Fatalf("cap metadata incorrect, extra=%v: status=%d points=%d truncated=%v sample=%+v fits=%v", extra, w.Code, len(capped.Points), capped.Truncated, capped.Sample, capped.Fits)
+		}
+	}
+
 }

@@ -70,11 +70,20 @@ func Evaluate(in Snapshot, omit []string) Result {
 	}
 	b := fitBaselines(selectPeers(in.Peers, in.Ref))
 	cs["chat_engagement"] = detect.Component{Reason: "no matched chat data or independent past peers"}
+	values := map[string]float64{}
+	if metricOK {
+		values = map[string]float64{"median_viewers": stats.MedianViewers, "chatters_per_k": stats.ChattersPerK,
+			"aggregate_per_k": stats.AggregatePerK, "eligible_minutes": float64(stats.EligibleMinutes),
+			"silent_minutes": float64(stats.SilentMinutes), "eligible_messages": stats.Messages, "chat_coverage": stats.ChatCoverage}
+		cs["chat_engagement"] = detect.Component{Values: values, Reason: "measurements available; insufficient independent past peers"}
+	}
 	if metricOK && b.ok() {
 		e := b.Expect(in.Ref.Language, in.GameID, in.GameName)
-		c := detect.ChatResidualComponent(e.Z(stats.MedianViewers, stats.ChattersPerK), false, map[string]float64{
-			"median_viewers": stats.MedianViewers, "chatters_per_k": stats.ChattersPerK, "expected_per_k": e.Expected(stats.MedianViewers), "chat_coverage": stats.ChatCoverage, "category_peers": float64(e.CategoryPeers), "category_offset": round(e.CategoryOffset), "family_offset": round(e.FamilyOffset),
-		})
+		values["expected_per_k"] = e.Expected(stats.MedianViewers)
+		values["category_peers"] = float64(e.CategoryPeers)
+		values["category_offset"] = round(e.CategoryOffset)
+		values["family_offset"] = round(e.FamilyOffset)
+		c := detect.ChatResidualComponent(e.Z(stats.MedianViewers, stats.ChattersPerK), false, values)
 		c.Reason = engagementNote(e)
 		cs["chat_engagement"] = c
 	}

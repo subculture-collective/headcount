@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,24 +19,31 @@ import (
 const engagementLimit = 3000
 
 type engagementPoint struct {
-	StreamID      string    `json:"stream_id"`
-	Login         string    `json:"login"`
-	DisplayName   string    `json:"display_name"`
-	Language      string    `json:"language"`
-	GameName      *string   `json:"game_name"`
-	StartedAt     time.Time `json:"started_at"`
-	Quotient      float64   `json:"quotient"`
-	Confidence    float64   `json:"confidence"`
-	Final         bool      `json:"final"`
-	MedianViewers float64   `json:"median_viewers"`
-	ChattersPerK  float64   `json:"chatters_per_k"`
-	ExpectedPerK  *float64  `json:"expected_per_k"`
-	Z             *float64  `json:"z"`
-	Strength      float64   `json:"strength"`
+	ChannelID        string    `json:"-"`
+	ScoredAt         time.Time `json:"scored_at"`
+	Version          int       `json:"score_version"`
+	AggregatePerK    *float64  `json:"aggregate_per_k"`
+	EligibleMinutes  *int      `json:"eligible_minutes"`
+	SilentMinutes    *int      `json:"silent_minutes"`
+	EligibleMessages *float64  `json:"eligible_messages"`
+	StreamID         string    `json:"stream_id"`
+	Login            string    `json:"login"`
+	DisplayName      string    `json:"display_name"`
+	Language         string    `json:"language"`
+	GameName         *string   `json:"game_name"`
+	StartedAt        time.Time `json:"started_at"`
+	Quotient         float64   `json:"quotient"`
+	Confidence       float64   `json:"confidence"`
+	Final            bool      `json:"final"`
+	MedianViewers    float64   `json:"median_viewers"`
+	ChattersPerK     float64   `json:"chatters_per_k"`
+	ExpectedPerK     *float64  `json:"expected_per_k"`
+	Z                *float64  `json:"z"`
+	Strength         float64   `json:"strength"`
 }
 
 // engagement returns recently scored streams with their chat-engagement
-// inputs, and log-log fits through them (global and per language).
+// inputs, activity summaries and fits for each language/category selection.
 func (s *Server) engagement(w http.ResponseWriter, r *http.Request) {
 	days, err := strconv.Atoi(r.URL.Query().Get("days"))
 	if err != nil || days < 1 || days > 14 {
@@ -52,21 +60,25 @@ func (s *Server) engagement(w http.ResponseWriter, r *http.Request) {
 	// Measurements are saved with the score even when independent past peers
 	// are insufficient for a residual. Keep those points on the descriptive map.
 	rows, err := s.db.Query(ctx, `
-		SELECT sc.stream_id::text, c.login, c.display_name, coalesce(st.language, ''), st.game_name, st.started_at,
+		SELECT sc.stream_id::text, c.id::text, sc.scored_at, sc.version, c.login, c.display_name, coalesce(st.language, ''), coalesce(nullif(pm.game_name, ''), st.game_name), st.started_at,
 		       sc.quotient, sc.confidence, sc.final,
 		       coalesce(pm.median_viewers, (sc.components #>> '{chat_engagement,values,median_viewers}')::float8),
 		       coalesce(pm.chatters_per_k, (sc.components #>> '{chat_engagement,values,chatters_per_k}')::float8),
 		       (sc.components #>> '{chat_engagement,values,expected_per_k}')::float8,
 		       (sc.components #>> '{chat_engagement,values,z}')::float8,
-		       coalesce((sc.components #>> '{chat_engagement,strength}')::float8, 0)
+		       coalesce((sc.components #>> '{chat_engagement,strength}')::float8, 0),
+		       (sc.components #>> '{chat_engagement,values,aggregate_per_k}')::float8,
+		       (sc.components #>> '{chat_engagement,values,eligible_minutes}')::int,
+		       (sc.components #>> '{chat_engagement,values,silent_minutes}')::int,
+		       (sc.components #>> '{chat_engagement,values,eligible_messages}')::float8
 		FROM stream_scores sc
 		JOIN streams st ON st.id = sc.stream_id
 		JOIN channels c ON c.id = sc.channel_id
 		LEFT JOIN stream_peer_metrics pm ON pm.stream_id = sc.stream_id AND pm.metric_version = 1
 		WHERE sc.scored_at > now() - make_interval(days => $1)
 		  AND (pm.stream_id IS NOT NULL OR sc.components #> '{chat_engagement,values}' ? 'median_viewers')
-		ORDER BY sc.scored_at DESC
-		LIMIT $2`, days, engagementLimit)
+		ORDER BY sc.scored_at DESC, sc.stream_id DESC
+		LIMIT $2`, days, engagementLimit+1)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -74,8 +86,8 @@ func (s *Server) engagement(w http.ResponseWriter, r *http.Request) {
 	points := []engagementPoint{}
 	for rows.Next() {
 		var p engagementPoint
-		if err := rows.Scan(&p.StreamID, &p.Login, &p.DisplayName, &p.Language, &p.GameName, &p.StartedAt,
-			&p.Quotient, &p.Confidence, &p.Final, &p.MedianViewers, &p.ChattersPerK, &p.ExpectedPerK, &p.Z, &p.Strength); err != nil {
+		if err := rows.Scan(&p.StreamID, &p.ChannelID, &p.ScoredAt, &p.Version, &p.Login, &p.DisplayName, &p.Language, &p.GameName, &p.StartedAt,
+			&p.Quotient, &p.Confidence, &p.Final, &p.MedianViewers, &p.ChattersPerK, &p.ExpectedPerK, &p.Z, &p.Strength, &p.AggregatePerK, &p.EligibleMinutes, &p.SilentMinutes, &p.EligibleMessages); err != nil {
 			rows.Close()
 			s.fail(w, err)
 			return
@@ -86,39 +98,32 @@ func (s *Server) engagement(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	fits := map[string]engagementFit{}
-	byLang := map[string][2][]float64{}
-	var gx, gy []float64
-	for _, p := range points {
-		gx, gy = append(gx, p.MedianViewers), append(gy, p.ChattersPerK)
-		if p.Language != "" {
-			g := byLang[p.Language]
-			byLang[p.Language] = [2][]float64{append(g[0], p.MedianViewers), append(g[1], p.ChattersPerK)}
+	rows.Close()
+	truncated := len(points) > engagementLimit
+	if truncated {
+		points = points[:engagementLimit]
+	}
+	var oldest, newest *time.Time
+	channels := map[string]bool{}
+	summaries := 0
+	for i := range points {
+		p := &points[i]
+		if oldest == nil || p.ScoredAt.Before(*oldest) {
+			oldest = &p.ScoredAt
 		}
-	}
-	if f, ok := fitEngagement(gx, gy, minFitGlobal); ok {
-		fits[""] = f
-	}
-	for lang, g := range byLang {
-		if f, ok := fitEngagement(g[0], g[1], minFitLang); ok {
-			fits[lang] = f
+		if newest == nil || p.ScoredAt.After(*newest) {
+			newest = &p.ScoredAt
 		}
-	}
-	byCat := map[string][2][]float64{}
-	for _, p := range points {
-		if p.GameName != nil && *p.GameName != "" {
-			g := byCat[*p.GameName]
-			byCat[*p.GameName] = [2][]float64{append(g[0], p.MedianViewers), append(g[1], p.ChattersPerK)}
-		}
-	}
-	for cat, g := range byCat {
-		if f, ok := fitEngagement(g[0], g[1], minFitLang); ok {
-			fits["cat:"+cat] = f
+		channels[p.ChannelID] = true
+		if p.AggregatePerK != nil {
+			summaries++
 		}
 	}
 	raw, err := json.Marshal(map[string]any{
-		"days": days, "limit": engagementLimit, "truncated": len(points) == engagementLimit,
-		"points": points, "fits": fits,
+		"days": days, "limit": engagementLimit, "truncated": truncated,
+		"points": points, "fits": engagementFits(points, false), "aggregate_fits": engagementFits(points, true),
+		"sample": map[string]any{"oldest_scored_at": oldest, "newest_scored_at": newest,
+			"channels": len(channels), "summaries": summaries, "reference_unit": "latest measured stream per channel in selection"},
 	})
 	if err != nil {
 		s.fail(w, err)
@@ -126,6 +131,77 @@ func (s *Server) engagement(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store(key, raw)
 	s.writeJSON(w, json.RawMessage(raw))
+}
+
+// selectionFitKey keeps language/category intersections distinct from fallbacks.
+func selectionFitKey(lang, cat string) string {
+	if lang == "" && cat == "" {
+		return ""
+	}
+	if cat == "" {
+		return lang
+	}
+	if lang == "" {
+		return "cat:" + cat
+	}
+	key, _ := json.Marshal([2]string{lang, cat}) // strings always marshal successfully
+	return "selection:" + string(key)
+}
+
+func engagementFits(points []engagementPoint, aggregate bool) map[string]engagementFit {
+	type group struct {
+		channels       map[string]bool
+		viewers, rates []float64
+	}
+	groups := map[string]*group{}
+	ordered := slices.Clone(points)
+	slices.SortStableFunc(ordered, func(a, b engagementPoint) int { return b.ScoredAt.Compare(a.ScoredAt) })
+	for _, p := range ordered {
+		rate := p.ChattersPerK
+		if aggregate {
+			if p.AggregatePerK == nil {
+				continue
+			}
+			rate = *p.AggregatePerK
+		}
+		if p.MedianViewers <= 0 || rate < 0 {
+			continue
+		}
+		keys := []string{""}
+		if p.Language != "" {
+			keys = append(keys, selectionFitKey(p.Language, ""))
+		}
+		if p.GameName != nil && *p.GameName != "" {
+			keys = append(keys, selectionFitKey("", *p.GameName))
+			if p.Language != "" {
+				keys = append(keys, selectionFitKey(p.Language, *p.GameName))
+			}
+		}
+		for _, key := range keys {
+			g := groups[key]
+			if g == nil {
+				g = &group{channels: map[string]bool{}}
+				groups[key] = g
+			}
+			if g.channels[p.ChannelID] {
+				continue
+			}
+			g.channels[p.ChannelID] = true
+			g.viewers = append(g.viewers, p.MedianViewers)
+			g.rates = append(g.rates, rate)
+		}
+	}
+	fits := map[string]engagementFit{}
+	for key, g := range groups {
+		minN := minFitLang
+		if key == "" {
+			minN = minFitGlobal
+		}
+		if fit, ok := fitEngagement(g.viewers, g.rates, minN); ok {
+			fits[key] = fit
+		}
+	}
+	return fits
 }
 
 const (

@@ -433,9 +433,13 @@ func StartRamp(d StreamData, p Prepared) Component {
 // ChatStats summarizes chat engagement for the peer-group comparison done by
 // the scorer.
 type ChatStats struct {
-	MedianViewers float64
-	ChattersPerK  float64 // median unique chatters per minute per 1000 viewers
-	ChatCoverage  float64 // fraction of viewer minutes with chat data
+	MedianViewers   float64
+	ChattersPerK    float64 // median unique chatters per minute per 1000 viewers
+	ChatCoverage    float64 // fraction of viewer minutes with chat data
+	AggregatePerK   float64 // chat-author minutes per 1000 viewer-minutes
+	EligibleMinutes int
+	SilentMinutes   int
+	Messages        float64 // messages in eligible minutes only
 }
 
 func ChatEngagement(d StreamData, p Prepared) (ChatStats, bool) {
@@ -443,18 +447,29 @@ func ChatEngagement(d StreamData, p Prepared) (ChatStats, bool) {
 		return ChatStats{}, false
 	}
 	var viewers, ratios []float64
+	var sumChatters, sumViewers, messages float64
+	silent := 0
 	for i, v := range d.Viewers {
 		if i >= len(d.Chatters) || math.IsNaN(v) || math.IsNaN(d.Chatters[i]) || v < 100 || restrictedAt(d, i) || contextAt(d, i, i+1) {
 			continue
 		}
 		viewers = append(viewers, v)
 		ratios = append(ratios, d.Chatters[i]/v*1000)
+		sumChatters += d.Chatters[i]
+		sumViewers += v
+		if d.Chatters[i] == 0 {
+			silent++
+		}
+		if i < len(d.Messages) && !math.IsNaN(d.Messages[i]) {
+			messages += d.Messages[i]
+		}
 	}
 	cov := float64(len(ratios)) / float64(len(d.Viewers))
 	if len(ratios) < 30 || cov < 0.5 {
 		return ChatStats{ChatCoverage: cov}, false
 	}
-	return ChatStats{MedianViewers: Median(viewers), ChattersPerK: Median(ratios), ChatCoverage: cov}, true
+	return ChatStats{MedianViewers: Median(viewers), ChattersPerK: Median(ratios), ChatCoverage: cov,
+		AggregatePerK: 1000 * sumChatters / sumViewers, EligibleMinutes: len(ratios), SilentMinutes: silent, Messages: messages}, true
 }
 
 // ChatResidualComponent turns a peer-group z-score of log chatters-per-1k
