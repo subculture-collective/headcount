@@ -131,22 +131,12 @@ func run(args []string) error {
 			}
 			when = &v
 		}
-		var input, output []byte
-		if err := db.Pool.QueryRow(ctx, `SELECT input,output FROM score_snapshots WHERE stream_id=$1 AND ($2::timestamptz IS NULL OR observed_at=$2) ORDER BY observed_at DESC,version DESC LIMIT 1`, id, when).Scan(&input, &output); err != nil {
-			return err
-		}
-		var p research.Packet
-		if err := json.Unmarshal(input, &p.Input); err != nil {
-			return err
-		}
-		if err := json.Unmarshal(output, &p.Output); err != nil {
-			return err
-		}
-		p.Digest, err = research.Digest(p.Input)
+		raw, err := db.ReplaySnapshot(ctx, id, when)
 		if err != nil {
 			return err
 		}
-		if err = p.Verify(); err != nil {
+		p, err := research.HydrateReplay(raw)
+		if err != nil {
 			return err
 		}
 		result = p
