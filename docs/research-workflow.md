@@ -117,6 +117,10 @@ main/TOAST diagnostics, disposable churn evidence, candidate table settings and
 bounded routine maintenance. Production settings remain a separate rollout.
 
 
+The [native retention rollout](operations/replay-retention-rollout.md) and its
+[qualification ledger](operations/replay-retention-qualification.md) track the
+separate approval and collector activation.
+
 ### Frozen context cleanup
 
 The retention worker also sweeps immutable context keys in bounded transactions.
