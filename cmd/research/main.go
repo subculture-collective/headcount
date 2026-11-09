@@ -33,7 +33,10 @@ func readJSON(path string, v any) error {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: research export|replay|review|case|sample|control-cases|evaluate|calibrate|probability-evaluate|persistence|record-context [flags]")
+		return errors.New("usage: research export|replay|review|case|sample|control-cases|evaluate|calibrate|probability-evaluate|persistence|record-context|retention-preview [flags]")
+	}
+	if args[0] == "retention-preview" {
+		return retentionPreview(args[1:])
 	}
 	f := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	in := f.String("in", "", "input packet, case list, or calibration artifact")

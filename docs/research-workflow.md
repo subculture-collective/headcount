@@ -24,6 +24,60 @@ The public API role cannot read `score_snapshots` or `user_observations`. The pu
 
 `CHATTER_RETENTION_DAYS` defaults to 30 and governs author rows and lookup-history retention. New summaries preserve true totals, creation-date resolution and pending counts. `REPLAY_RETENTION_DAYS` defaults to 7 and governs snapshots, which can be much larger. Zero disables the respective pruning. Cached scalar peer/behavior metrics remain with stream records. Measure database growth before lengthening snapshot retention. Export selected packets before expiry; exports are not automatically pruned.
 
+### Preview replay retention without changing the database
+
+`retention-preview` reports a proposed policy in one read-only, repeatable-read
+transaction. It does not run migrations, start collection, delete evidence, or
+change collector configuration. Use a trusted connection with private replay
+read access in `DATABASE_URL`; the public `susq_api` role is intentionally denied.
+
+Choose and record a fixed policy time. This example uses a November 9 cutoff:
+
+```sh
+go run ./cmd/research retention-preview \
+  -as-of 2026-11-09T12:00:00Z \
+  -detail-window 48h -retention-window 168h \
+  -out /tmp/headcount-retention-preview.json
+```
+
+The output is a new private file with mode `0600`. Existing files are never
+overwritten. It contains aggregate metadata, not stream identifiers, packet
+contents, author data, or connection credentials. Connection/query work is
+bounded by a 30-second context.
+
+The selector has three disjoint dispositions:
+
+- **Expired:** observed before the outer cutoff, even if it is the last replay
+  for that stream and scoring version.
+- **Retained:** inside the detailed window, or the newest as-of replay for its
+  `(stream_id, version)` group inside the outer window.
+- **Thinnable:** older intermediate replays inside the outer window.
+
+The detailed boundary is inclusive. A row exactly at the outer boundary is
+inside retention but may still be thinnable. Rows after `as-of` are preserved
+and do not displace the latest as-of row. Reopening a stream does not make an
+older final input preferable to its newest input. Different scoring versions
+have separate protected latest rows.
+
+`-retention-window 0` disables all pruning in the proposed policy. Setting only
+`-detail-window 0` disables thinning while retaining outer expiry. Negative
+windows and a detail window longer than a positive outer window are rejected.
+
+`as_of` fixes age cutoffs; `measured_at` identifies the database read. New data
+can change a later preview even with the same cutoffs. `policy_pruning_enabled`
+describes the proposed policy, not the collector's live settings. The shared
+selection is intended for the later bounded-pruner issue; this command never
+applies its candidates.
+
+Payload totals use `pg_column_size(input) + pg_column_size(output)`, reflecting
+the currently referenced values and their compression. Physical table, index,
+and TOAST allocation are reported separately. Dead/live row counts are estimates;
+statistics can reset, and a null vacuum timestamp does not prove vacuum never
+ran. Allocation/statistics are live diagnostics rather than a frozen MVCC view.
+Neither expired payload bytes nor dead-row estimates promise immediate file-size
+reduction. Review a fresh preview and retained research exports before any later
+production pruning checkpoint.
+
 ## Export and replay
 
 Build the tool with `go build -o /tmp/headcount-research ./cmd/research`. It also ships in the existing container image because the Dockerfile builds all commands. `DATABASE_URL` is used only by export and the explicit context-writing command. Keep it in the existing environment/secret store.
