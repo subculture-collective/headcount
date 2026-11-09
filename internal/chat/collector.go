@@ -616,7 +616,9 @@ func (c *Collector) lookupUsers(ctx context.Context, ids []int64) error {
 		for i, id := range chunk {
 			strIDs[i] = strconv.FormatInt(id, 10)
 		}
-		lctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		// Low-priority calls may wait up to a minute for the shared Helix
+		// budget to refill before their bounded HTTP request can start.
+		lctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		found, err := c.helix.Users(lctx, strIDs)
 		cancel()
 		if err != nil {
