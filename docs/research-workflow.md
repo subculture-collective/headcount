@@ -83,9 +83,39 @@ Neither expired payload bytes nor dead-row estimates promise immediate file-size
 reduction. Review a fresh preview and retained research exports before any later
 production pruning checkpoint.
 
+
+### Bounded replay retention worker
+
+The collector runs replay retention separately from scoring. Each transaction
+examines at most 500 old snapshot identities, locks with `SKIP LOCKED`, and
+uses the same disposition rule as the preview. It deletes no more than those
+500 rows. An oldest-first cursor advances across retained rows as well as deleted
+ones; a cycle keeps one fixed as-of instant. Each minute allows at most 100
+batches and 30 seconds of database work. Completed cycles wait one hour. Locked
+rows and late backdated inserts are reconsidered on the next cycle; cancellation
+rolls back the in-flight batch and keeps earlier committed batches.
+
+`REPLAY_RETENTION_DAYS=7` keeps existing outer expiry. Zero disables replay
+pruning. `REPLAY_DETAIL_HOURS` defaults to **0**, which preserves outer expiry
+without intermediate thinning. The proposed activation is 48 hours of detail
+inside the seven-day outer window, but enabling that value belongs to the
+separate native release after a fresh preview, selected private exports and a
+verified backup/restore. API image promotion does not restart the collector.
+Negative or inverted collector horizons fail startup rather than choosing an
+unexpected deletion policy.
+
+Older intermediate inputs are required for fine-grained persistence studies;
+one retained replay per stream/version cannot reconstruct them. Export selected
+self-contained packets before activation using the private workflow below.
+Setting detail to zero stops further thinning; setting outer retention to zero
+stops all replay pruning. Binary/config rollback does not recreate deleted
+history: recovery requires retained backups or exported packets. Scoring cadence,
+current scores, peer metrics, author retention and raw minute series are unchanged.
+
 The [replay maintenance runbook](operations/replay-maintenance.md) explains the
 main/TOAST diagnostics, disposable churn evidence, candidate table settings and
 bounded routine maintenance. Production settings remain a separate rollout.
+
 
 ## Export and replay
 

@@ -43,18 +43,20 @@ func (p ReplayRetentionPolicy) cutoffs() (detail, expiry *time.Time) {
 // replayRetentionRows is the shared selection contract for previews and a future
 // bounded pruner. It returns identities, payload sizes and disjoint dispositions.
 // Rows after as-of are preserved and cannot displace the newest as-of evidence.
-const replayRetentionRows = `WITH ranked AS (
- SELECT stream_id,observed_at,version,
-        pg_column_size(input)::bigint+pg_column_size(output)::bigint AS payload_bytes,
-        max(observed_at) FILTER(WHERE observed_at<=$1) OVER(PARTITION BY stream_id,version) AS newest
- FROM public.score_snapshots
-), retention_rows AS (
- SELECT stream_id,observed_at,version,payload_bytes,
-        CASE WHEN $3::timestamptz IS NULL THEN 'retained'
-             WHEN observed_at<$3 THEN 'expired'
-             WHEN $2::timestamptz IS NULL OR observed_at>=$2 OR observed_at>$1 OR observed_at=newest THEN 'retained'
-             ELSE 'thinnable' END AS disposition
- FROM ranked
+// replayDisposition is shared by the aggregate preview and bounded deletion.
+// An as-of newer row makes an older row redundant; future rows cannot do so.
+const replayDisposition = `CASE WHEN $3::timestamptz IS NULL THEN 'retained'
+ WHEN r.observed_at<$3 THEN 'expired'
+ WHEN $2::timestamptz IS NULL OR r.observed_at>=$2 OR r.observed_at>$1 THEN 'retained'
+ WHEN EXISTS(SELECT 1 FROM public.score_snapshots newer
+   WHERE newer.stream_id=r.stream_id AND newer.version=r.version
+   AND newer.observed_at>r.observed_at AND newer.observed_at<=$1) THEN 'thinnable'
+ ELSE 'retained' END`
+
+const replayRetentionRows = `WITH retention_rows AS (
+ SELECT r.stream_id,r.observed_at,r.version,
+ pg_column_size(r.input)::bigint+pg_column_size(r.output)::bigint AS payload_bytes,
+ ` + replayDisposition + ` AS disposition FROM public.score_snapshots r
 ) `
 
 // ReplayRetentionTotals describes referenced JSON values, excluding indexes,
