@@ -253,7 +253,8 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 				AND v.ts BETWEEN st.first_seen_at AND st.last_seen_at),
 			'chat', (SELECT coalesce(json_agg(json_build_array(extract(epoch FROM m.ts)::bigint, m.messages, m.unique_chatters,
 				m.new_chatters, m.top_text_count) ORDER BY m.ts), '[]')
-				FROM chat_minutes m, st WHERE m.channel_id = st.channel_id AND m.ts BETWEEN st.first_seen_at AND st.last_seen_at),
+				FROM chat_minutes m, st WHERE m.channel_id = st.channel_id
+				AND (m.stream_id=st.id OR (m.stream_id IS NULL AND m.healthy IS NULL)) AND m.ts BETWEEN st.first_seen_at AND st.last_seen_at),
 			'followers', (SELECT coalesce(json_agg(json_build_array(extract(epoch FROM f.ts)::bigint, f.total) ORDER BY f.ts), '[]')
 				FROM follower_samples f, st WHERE f.channel_id = st.channel_id
 				AND f.ts BETWEEN st.first_seen_at - interval '5 minutes' AND st.last_seen_at),

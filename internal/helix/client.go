@@ -167,14 +167,30 @@ func (c *Client) updateBudget(h http.Header) bool {
 	limit, err3 := strconv.Atoi(h.Get("Ratelimit-Limit"))
 	c.budgetMu.Lock()
 	defer c.budgetMu.Unlock()
-	if err1 == nil {
-		c.remaining = rem
-	}
-	if err2 == nil {
-		c.resetAt = time.Unix(reset, 0)
-	}
 	if err3 == nil && limit > 0 {
 		c.limit = limit
+	}
+	if err2 == nil {
+		window := time.Unix(reset, 0)
+		// Concurrent requests can complete out of order. A response from an
+		// older window must not move the reset backwards or restore quota.
+		if !window.After(time.Now()) || (!c.resetAt.IsZero() && window.Before(c.resetAt)) {
+			return err1 == nil
+		}
+		if window.After(c.resetAt) {
+			unknownWindow := c.resetAt.IsZero()
+			c.resetAt = window
+			if err1 == nil {
+				if unknownWindow {
+					rem = min(rem, c.remaining)
+				}
+				c.remaining = max(0, min(rem, c.limit))
+			}
+			return err1 == nil
+		}
+	}
+	if err1 == nil {
+		c.remaining = max(0, min(c.remaining, rem))
 	}
 	return err1 == nil
 }
@@ -280,6 +296,9 @@ type streamsResponse struct {
 
 // TopStreams returns up to n live streams ordered by viewer count.
 func (c *Client) TopStreams(ctx context.Context, n int) ([]Stream, error) {
+	if n <= 0 {
+		return nil, fmt.Errorf("streams: limit must be positive")
+	}
 	var out []Stream
 	seen := map[string]bool{}
 	cursor := ""

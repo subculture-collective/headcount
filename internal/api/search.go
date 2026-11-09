@@ -118,7 +118,7 @@ func (s *Server) category(w http.ResponseWriter, r *http.Request) {
 				       (array_agg(st.id::text ORDER BY st.quotient DESC NULLS LAST)
 				         FILTER (WHERE st.final AND st.confidence >= 0.1))[1] AS top_stream_id
 				FROM st JOIN channels c ON c.id = st.channel_id
-				GROUP BY c.id LIMIT 500) x),
+				GROUP BY c.id ORDER BY max_quotient DESC NULLS LAST, peak DESC, c.id LIMIT 500) x),
 			'related', (SELECT coalesce(json_agg(row_to_json(x) ORDER BY x.streams DESC), '[]') FROM (
 				SELECT game_id, max(game_name) AS game_name, count(*) AS streams
 				FROM streams WHERE game_name = ANY($5) AND game_id IS NOT NULL

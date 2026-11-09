@@ -66,7 +66,7 @@ func Evaluate(in Snapshot, omit []string) Result {
 	stats, metricOK := detect.ChatEngagement(d, p)
 	var peer *store.PeerStat
 	if metricOK {
-		peer = &store.PeerStat{StreamID: in.Ref.ID, ChannelID: in.Ref.ChannelID, StartedAt: in.Ref.StartedAt, EndedAt: in.Ref.LastSeenAt, Language: in.Ref.Language, GameID: in.GameID, GameName: in.GameName, MedianViewers: stats.MedianViewers, ChattersPerK: stats.ChattersPerK}
+		peer = &store.PeerStat{MetricVersion: store.PeerMetricVersion, StreamID: in.Ref.ID, ChannelID: in.Ref.ChannelID, StartedAt: in.Ref.StartedAt, EndedAt: in.Ref.LastSeenAt, Language: in.Ref.Language, GameID: in.GameID, GameName: in.GameName, MedianViewers: stats.MedianViewers, ChattersPerK: stats.ChattersPerK}
 	}
 	b := fitBaselines(selectPeers(in.Peers, in.Ref))
 	cs["chat_engagement"] = detect.Component{Reason: "no matched chat data or independent past peers"}
@@ -163,7 +163,7 @@ func selectPeers(peers []store.PeerStat, r store.StreamRef) []store.PeerStat {
 	seen := map[int64]bool{}
 	out := []store.PeerStat{}
 	for _, x := range p {
-		if x.ChannelID == r.ChannelID || x.EndedAt.IsZero() || !x.EndedAt.Before(r.StartedAt) || x.EndedAt.Before(r.StartedAt.Add(-7*24*time.Hour)) || seen[x.ChannelID] {
+		if x.MetricVersion != store.PeerMetricVersion || x.ChannelID == r.ChannelID || x.EndedAt.IsZero() || !x.EndedAt.Before(r.StartedAt) || x.EndedAt.Before(r.StartedAt.Add(-7*24*time.Hour)) || seen[x.ChannelID] {
 			continue
 		}
 		seen[x.ChannelID] = true

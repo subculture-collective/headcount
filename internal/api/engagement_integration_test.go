@@ -82,6 +82,21 @@ func TestEngagementWithoutScorerBaseline(t *testing.T) {
 	if len(data.Fits) != 0 {
 		t.Fatal("small sample invented a reference fit")
 	}
+	if _, err = st.Pool.Exec(ctx, `INSERT INTO chat_minutes(ts,channel_id,stream_id,messages,unique_chatters,new_chatters,first_msgs,emote_only,distinct_texts,top_text_count,bans,timeouts,healthy)
+	 VALUES(now()-interval '1 hour',1,2,1,1,0,0,0,1,1,0,0,true),
+	 (now()-interval '45 minutes',1,NULL,1,1,0,0,0,1,1,0,0,false)`); err != nil {
+		t.Fatal(err)
+	}
+	w = get(t, s.Handler(), "/api/streams/1")
+	var streamData struct {
+		Chat [][]any `json:"chat"`
+	}
+	if err = json.Unmarshal(w.Body.Bytes(), &streamData); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != 200 || len(streamData.Chat) != 0 {
+		t.Fatal("public stream API leaked chat owned by another stream")
+	}
 	// New summaries remain available independently of a scorer comparison;
 	// historical measurements keep explicit null summaries.
 	_, err = st.Pool.Exec(ctx, `
@@ -144,5 +159,32 @@ func TestEngagementWithoutScorerBaseline(t *testing.T) {
 			t.Fatalf("cap metadata incorrect, extra=%v: status=%d points=%d truncated=%v sample=%+v fits=%v", extra, w.Code, len(capped.Points), capped.Truncated, capped.Sample, capped.Fits)
 		}
 	}
+	t.Run("category ranks before limit", func(t *testing.T) {
+		_, err := st.Pool.Exec(ctx, `INSERT INTO channels(id,login,display_name,first_seen_at) SELECT i,'cap'||i,'Cap '||i,now() FROM generate_series(2,502) i;
+ INSERT INTO streams(id,channel_id,started_at,first_seen_at,last_seen_at,ended_at,game_id,game_name) SELECT 10000+i,i,now(),now(),now(),now(),'17','Cap category' FROM generate_series(2,502) i;
+ INSERT INTO stream_scores(stream_id,channel_id,scored_at,version,minutes,quotient,confidence,components,final) SELECT 10000+i,i,now(),11,60,0,0.5,'{}',true FROM generate_series(2,502) i;`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Put the highest score on the channel the old unordered limit excludes.
+		_, err = st.Pool.Exec(ctx, `WITH omitted AS(SELECT c.id FROM channels c WHERE c.id BETWEEN 2 AND 502
+ AND c.id NOT IN(SELECT c.id FROM streams st JOIN channels c ON c.id=st.channel_id WHERE st.game_id='17' GROUP BY c.id LIMIT 500) LIMIT 1)
+ UPDATE stream_scores SET quotient=90 WHERE channel_id=(SELECT id FROM omitted)`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := get(t, s.Handler(), "/api/categories/17")
+		var category struct {
+			Channels []struct {
+				Max float64 `json:"max_quotient"`
+			} `json:"channels"`
+		}
+		if err = json.Unmarshal(w.Body.Bytes(), &category); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != 200 || len(category.Channels) != 500 || category.Channels[0].Max != 90 {
+			t.Fatalf("highest category score omitted at cap: status=%d channels=%d", w.Code, len(category.Channels))
+		}
+	})
 
 }

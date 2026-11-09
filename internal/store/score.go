@@ -114,7 +114,7 @@ func (s *Store) LoadSeries(ctx context.Context, r StreamRef) (StreamSeries, erro
 	rows.Close()
 
 	rows, err = s.reader().Query(ctx, `SELECT ts, messages, unique_chatters, top_text_count,healthy,commands,utility_messages,bot_badge_messages,duplicate_messages,delayed_messages,source_delay_ms FROM chat_minutes
-		WHERE channel_id = $1 AND ts BETWEEN $2 AND $3 ORDER BY ts`, r.ChannelID, from, to)
+		WHERE channel_id = $1 AND ts BETWEEN $2 AND $3 AND (stream_id=$4 OR stream_id IS NULL) ORDER BY ts`, r.ChannelID, from, to, r.ID)
 	if err != nil {
 		return out, err
 	}
@@ -209,7 +209,11 @@ func (s *Store) ChatterAccounts(ctx context.Context, streamID int64, startedAt, 
 	return
 }
 
+// PeerMetricVersion changes when paired-minute eligibility or ownership changes.
+const PeerMetricVersion = 2
+
 type PeerStat struct {
+	MetricVersion       int `json:"MetricVersion,omitempty"`
 	StreamID, ChannelID int64
 	StartedAt, EndedAt  time.Time
 	Language            string
@@ -224,11 +228,11 @@ type PeerStat struct {
 func (s *Store) ChatPeerStats(ctx context.Context, since, before time.Time, exclude int64) ([]PeerStat, error) {
 	rows, err := s.reader().Query(ctx, `
  SELECT DISTINCT ON(s.channel_id) s.id,s.channel_id,s.started_at,s.last_seen_at,
- p.language,p.game_id,p.game_name,p.median_viewers,p.chatters_per_k
+ p.language,p.game_id,p.game_name,p.median_viewers,p.chatters_per_k,p.metric_version
  FROM stream_peer_metrics p JOIN streams s ON s.id=p.stream_id
- WHERE p.metric_version=1 AND s.channel_id<>$3 AND s.ended_at>$1 AND s.ended_at<$2
+ WHERE p.metric_version=$4 AND s.channel_id<>$3 AND s.ended_at>$1 AND s.ended_at<$2
  AND p.source_last_seen=s.last_seen_at
- ORDER BY s.channel_id,s.last_seen_at DESC,s.id DESC`, since, before, exclude)
+ ORDER BY s.channel_id,s.last_seen_at DESC,s.id DESC`, since, before, exclude, PeerMetricVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +240,7 @@ func (s *Store) ChatPeerStats(ctx context.Context, since, before time.Time, excl
 	var out []PeerStat
 	for rows.Next() {
 		var p PeerStat
-		if err := rows.Scan(&p.StreamID, &p.ChannelID, &p.StartedAt, &p.EndedAt, &p.Language, &p.GameID, &p.GameName, &p.MedianViewers, &p.ChattersPerK); err != nil {
+		if err := rows.Scan(&p.StreamID, &p.ChannelID, &p.StartedAt, &p.EndedAt, &p.Language, &p.GameID, &p.GameName, &p.MedianViewers, &p.ChattersPerK, &p.MetricVersion); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -262,6 +266,9 @@ type Score struct {
 	Behavior       map[string]float64
 }
 
+// ErrStaleScore leaves a stream pending when new context invalidates its input.
+var ErrStaleScore = errors.New("score input predates new distribution context")
+
 func (s *Store) SaveScore(ctx context.Context, sc Score) error {
 	comp, err := json.Marshal(sc.Components)
 	if err != nil {
@@ -276,6 +283,24 @@ func (s *Store) SaveScore(ctx context.Context, sc Score) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	// Serialize with session changes and operator annotations before updating
+	// any cached evidence. A later annotation must not lose its rescore request.
+	var channelID int64
+	var from, to time.Time
+	if err := tx.QueryRow(ctx, `SELECT channel_id,started_at,last_seen_at FROM streams WHERE id=$1 FOR UPDATE`, sc.StreamID).Scan(&channelID, &from, &to); err != nil {
+		return err
+	}
+	if !sc.ObservedAt.IsZero() {
+		var newerContext bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM channel_events
+		 WHERE stream_id=$1 AND kind='distribution_context' AND (detail->>'recorded_at')::timestamptz>$2
+		 AND channel_id=$3 AND ts BETWEEN $4 AND $5)`, sc.StreamID, sc.ObservedAt, channelID, from, to.Add(time.Minute)).Scan(&newerContext); err != nil {
+			return err
+		}
+		if newerContext {
+			return ErrStaleScore
+		}
+	}
 	if sc.Behavior != nil {
 		raw, err := json.Marshal(sc.Behavior)
 		if err != nil {
@@ -288,7 +313,7 @@ func (s *Store) SaveScore(ctx context.Context, sc Score) error {
 	if sc.Peer != nil {
 		p := sc.Peer
 		if _, err := tx.Exec(ctx, `INSERT INTO stream_peer_metrics(stream_id,metric_version,source_last_seen,language,game_id,game_name,median_viewers,chatters_per_k)
- VALUES($1,1,$2,$3,$4,$5,$6,$7) ON CONFLICT(stream_id) DO UPDATE SET metric_version=1,source_last_seen=$2,language=$3,game_id=$4,game_name=$5,median_viewers=$6,chatters_per_k=$7`, sc.StreamID, sc.LastSeenAt, p.Language, p.GameID, p.GameName, p.MedianViewers, p.ChattersPerK); err != nil {
+ VALUES($1,$8,$2,$3,$4,$5,$6,$7) ON CONFLICT(stream_id) DO UPDATE SET metric_version=$8,source_last_seen=$2,language=$3,game_id=$4,game_name=$5,median_viewers=$6,chatters_per_k=$7`, sc.StreamID, sc.LastSeenAt, p.Language, p.GameID, p.GameName, p.MedianViewers, p.ChattersPerK, PeerMetricVersion); err != nil {
 			return err
 		}
 	} else {

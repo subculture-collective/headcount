@@ -225,10 +225,15 @@ func Observe(cs []Case, split, target string, omit []string) ([]Observation, err
 		}
 	}
 	var out []Observation
+	seen := map[int64]bool{}
 	for _, c := range cs {
 		if c.Split != split {
 			continue
 		}
+		if seen[c.Input.Ref.ID] {
+			return nil, fmt.Errorf("evaluation requires one snapshot per stream; repeated snapshots are correlated")
+		}
+		seen[c.Input.Ref.ID] = true
 		r := score.Evaluate(c.Input, omit)
 		m := r.Evidence.Mechanisms[target]
 		positive, known := agreed(c, target)
@@ -393,15 +398,6 @@ func Evaluate(cs []Case, split, target string, threshold, coverage float64, omit
 	}
 	var rep, challenge []Observation
 	groups := map[string][]Observation{}
-	seen := map[int64]bool{}
-	for _, c := range cs {
-		if c.Split == split {
-			if seen[c.Input.Ref.ID] {
-				return Report{}, fmt.Errorf("evaluation requires one snapshot per stream; repeated snapshots are correlated")
-			}
-			seen[c.Input.Ref.ID] = true
-		}
-	}
 	for _, o := range os {
 		if o.Challenge {
 			challenge = append(challenge, o)

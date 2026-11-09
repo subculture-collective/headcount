@@ -3,6 +3,7 @@ package helix
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -42,6 +43,50 @@ func TestRefundCapsAtLimit(t *testing.T) {
 	c.refund()
 	if c.remaining != c.limit {
 		t.Fatalf("remaining %d exceeds limit %d", c.remaining, c.limit)
+	}
+}
+
+func TestBudgetIgnoresOutOfOrderResponses(t *testing.T) {
+	c := New("id", "secret")
+	reset := time.Now().Add(time.Minute).Truncate(time.Second)
+	c.remaining = 100
+	c.resetAt = reset
+	for _, tt := range []struct {
+		name      string
+		remaining int
+		reset     time.Time
+	}{
+		{"older request in same window", 200, reset},
+		{"previous window", 700, reset.Add(-time.Minute)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := http.Header{"Ratelimit-Remaining": {fmt.Sprint(tt.remaining)}, "Ratelimit-Reset": {fmt.Sprint(tt.reset.Unix())}, "Ratelimit-Limit": {"800"}}
+			c.updateBudget(h)
+			if c.remaining != 100 || !c.resetAt.Equal(reset) {
+				t.Fatalf("late response restored spent quota: remaining=%d reset=%v", c.remaining, c.resetAt)
+			}
+		})
+	}
+}
+
+func TestFirstBudgetResponseKeepsInflightReservations(t *testing.T) {
+	c := New("id", "secret")
+	c.remaining = 790
+	h := http.Header{"Ratelimit-Remaining": {"799"}, "Ratelimit-Reset": {fmt.Sprint(time.Now().Add(time.Minute).Unix())}}
+	c.updateBudget(h)
+	if c.remaining != 790 {
+		t.Fatalf("first response released in-flight reservations: %d", c.remaining)
+	}
+}
+
+func TestTopStreamsRejectsInvalidLimit(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("invalid limit panicked: %v", r)
+		}
+	}()
+	if _, err := New("id", "secret").TopStreams(context.Background(), -1); err == nil {
+		t.Fatal("accepted negative stream limit")
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"git.subcult.tv/subculture-collective/headcount/internal/store"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -74,11 +75,11 @@ func (s *Server) engagement(w http.ResponseWriter, r *http.Request) {
 		FROM stream_scores sc
 		JOIN streams st ON st.id = sc.stream_id
 		JOIN channels c ON c.id = sc.channel_id
-		LEFT JOIN stream_peer_metrics pm ON pm.stream_id = sc.stream_id AND pm.metric_version = 1
+		LEFT JOIN stream_peer_metrics pm ON pm.stream_id = sc.stream_id AND pm.metric_version IN (1, $3)
 		WHERE sc.scored_at > now() - make_interval(days => $1)
 		  AND (pm.stream_id IS NOT NULL OR sc.components #> '{chat_engagement,values}' ? 'median_viewers')
 		ORDER BY sc.scored_at DESC, sc.stream_id DESC
-		LIMIT $2`, days, engagementLimit+1)
+		LIMIT $2`, days, engagementLimit+1, store.PeerMetricVersion)
 	if err != nil {
 		s.fail(w, err)
 		return

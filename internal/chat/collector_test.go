@@ -58,3 +58,15 @@ func TestDuplicateAndDelayedMessagesDoNotInflateActivity(t *testing.T) {
 		t.Fatalf("late message counted as current: %+v", a)
 	}
 }
+
+func TestMinuteKeepsCollectedStreamAssociation(t *testing.T) {
+	c := New(live.New(), nil, nil, slog.Default())
+	a := c.agg(1, 10)
+	c.live.Set(live.Stream{ChannelID: 1, StreamID: 11})
+	if a.streamID != 10 {
+		t.Fatal("stream association changed with live state")
+	}
+	if got := c.agg(1, 11); got != a || !got.mixedStreams {
+		t.Fatal("mixed stream-minute not marked ambiguous")
+	}
+}
