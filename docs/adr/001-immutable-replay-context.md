@@ -5,8 +5,9 @@ migration or writer activation is included in this decision. Resolves #15.
 
 ## Why full replay inputs repeat
 
-`score.Snapshot` freezes the evidence used by one scoring pass. Its `peers`,
-`partners`, and optional `behavior_peers` arrays can repeat across passes.
+`score.Snapshot` freezes the evidence used by one scoring pass. Its `peers`
+and optional `behavior_peers` arrays can repeat across passes. The `partners`
+array grows or changes as synchrony overlap changes.
 `series`, account summaries, behavior, shared-account results, stream metadata,
 and observation time remain specific to the snapshot.
 
@@ -17,7 +18,8 @@ The mutable peer/behavior caches cannot supply historical replay evidence.
 
 ## Factor each nonempty reference array separately
 
-Use three context kinds: `peers`, `partners`, and `behavior_peers`. Separate
+Use two context kinds: `peers` and `behavior_peers`. Keep `partners` inline:
+all 24 sampled partner windows differed, while peer sets repeated. Separate
 objects let stable peers be reused when synchrony partners change. Keep empty
 arrays and nulls inline; they do not justify a reference row. Do not factor
 the growing per-stream series in this release.
@@ -26,11 +28,11 @@ For context schema 1, canonical bytes are Go `encoding/json.Marshal` applied
 to this ordered envelope:
 
 ```json
-{"context_schema":1,"kind":"partners","value":[{"Login":"fixture-two","OverlapMinutes":60,"Onsets":[1,3]}]}
+{"context_schema":1,"kind":"behavior_peers","value":[{"StreamID":201,"ChannelID":2,"EndedAt":"2026-01-01T01:00:00Z","Metrics":{"a":1,"b":2}}]}
 ```
 
 The envelope fields are declared in that order. `value` uses the existing typed
-slice: `[]store.PeerStat`, `[]detect.Partner`, or `[]store.BehaviorPeer`.
+slice: `[]store.PeerStat` or `[]store.BehaviorPeer`.
 Preserve array order, struct field order, `omitempty`, null versus empty arrays,
 Go's JSON string escaping, and its finite-number representation. Do not sort
 peers or onset arrays, round numbers, or apply a different JSON canonicalizer.
@@ -125,7 +127,9 @@ lossless field decomposition, not a production storage implementation.
 ## Measurement limits
 
 The November 9 investigation found substantial repeated peer context, but
-changing partner windows may prevent partner reuse. Measure both separately.
+all 24 partner windows were distinct. The mixed sample had three peer sets
+and six behavior-peer sets. Revisit partner factoring only after a separate
+study demonstrates reuse without changing overlap or onset semantics.
 The bounded compression study described in the PR uses actual input samples in
 an isolated PostgreSQL database, the same LZ4 setting for both variants, and a
 per-reference overhead budget. It is a feasibility estimate, not a forecast for
@@ -138,12 +142,12 @@ variants in isolated PostgreSQL 17.11 with LZ4 produced:
 | Measure | Bytes or count |
 |---|---:|
 | Inline JSONB payload | 5,229,917 bytes |
-| Sparse inputs plus distinct JSONB context payloads | 2,942,539 bytes |
-| Conservative reference overhead allowance | 18,432 bytes |
-| Distinct contexts | 33 |
-| Payload reduction including the allowance | 43.4% |
+| Sparse inputs plus distinct JSONB context payloads | 2,942,571 bytes |
+| Conservative reference overhead allowance | 12,288 bytes |
+| Distinct contexts | 9 |
+| Payload reduction including the allowance | 43.5% |
 
-The allowance is 256 bytes for each of 72 possible references. It is not an
+The allowance is 256 bytes for each of 48 possible references. It is not an
 index-size measurement. Original production stored bytes are not a fair baseline
 for this comparison because the two representations need the same encoding and
 compression setting. Raw samples stayed private in the disposable database.

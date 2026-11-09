@@ -20,16 +20,6 @@
     "sha256": "3b92f10fa6065abd6ba24ba64327da7f6dd98d61de1dcb67b84087f23ebd4745"
   },
   {
-    "name": "partners",
-    "canonical_utf8": "{\"context_schema\":1,\"kind\":\"partners\",\"value\":[{\"Login\":\"fixture-two\",\"OverlapMinutes\":60,\"Onsets\":[1,3]}]}",
-    "sha256": "6662e9b21ec6ea06bdbb21810d793051bae9481d682279aaed194d08ce22690a"
-  },
-  {
-    "name": "reversed-onsets",
-    "canonical_utf8": "{\"context_schema\":1,\"kind\":\"partners\",\"value\":[{\"Login\":\"fixture-two\",\"OverlapMinutes\":60,\"Onsets\":[3,1]}]}",
-    "sha256": "d25ea87d3998a3aaf09fbd32aff4610fdb71eca7e77d09961f229cc39286d352"
-  },
-  {
     "name": "behavior-map-order",
     "canonical_utf8": "{\"context_schema\":1,\"kind\":\"behavior_peers\",\"value\":[{\"StreamID\":201,\"ChannelID\":2,\"EndedAt\":\"2026-01-01T01:00:00Z\",\"Metrics\":{\"a\":1,\"b\":2}}]}",
     "sha256": "fc0957af2489e7719471bd89f248937a3655e535377a020854762e77f13067d8"

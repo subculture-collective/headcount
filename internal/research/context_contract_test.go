@@ -42,8 +42,6 @@ func TestReplayContextContractVectors(t *testing.T) {
 			switch envelope.Kind {
 			case "peers":
 				value = new([]store.PeerStat)
-			case "partners":
-				value = new([]detect.Partner)
 			case "behavior_peers":
 				value = new([]store.BehaviorPeer)
 			default:
@@ -85,7 +83,7 @@ func TestReplayContextFieldDecompositionPreservesPacket(t *testing.T) {
 		t.Fatal(err)
 	}
 	contexts := map[string]json.RawMessage{}
-	for _, field := range []string{"peers", "partners", "behavior_peers"} {
+	for _, field := range []string{"peers", "behavior_peers"} {
 		contexts[field] = fragment[field]
 		delete(fragment, field)
 	}
