@@ -27,7 +27,9 @@ A read-only database metadata transaction checks the API role's effective
 privileges: no superuser, role/database creation, replication or RLS bypass;
 no database/schema creation, writable persistent tables/sequences or executable
 application security-definer functions. The role must default to read-only
-transactions, and neither private research table may be selected. CI does not
+transactions, and none of the private research tables may be selected. The
+[replay-context admission runbook](operations/replay-context-admission.md) covers
+the additive schema and its native checkpoint. CI does not
 apply migrations, alter roles, call a provider, or modify production records.
 
 This API has no persistent mounts and cannot write production data under the

@@ -32,6 +32,8 @@ SELECT json_build_object(
  'read_only_default',coalesce('default_transaction_read_only=on'=ANY(rolconfig),false),
  'private_observations_select',has_table_privilege(rolname,'public.user_observations','SELECT'),
  'private_snapshots_select',has_table_privilege(rolname,'public.score_snapshots','SELECT'),
+ 'private_contexts_select',CASE WHEN to_regclass('public.replay_contexts') IS NULL THEN false ELSE has_table_privilege(rolname,to_regclass('public.replay_contexts'),'SELECT') END,
+ 'private_context_references_select',CASE WHEN to_regclass('public.score_snapshot_contexts') IS NULL THEN false ELSE has_table_privilege(rolname,to_regclass('public.score_snapshot_contexts'),'SELECT') END,
  'applied_migrations',(SELECT json_agg(name ORDER BY name) FROM public.schema_migrations))
 FROM pg_roles WHERE rolname='susq_api';
 ROLLBACK;
@@ -53,7 +55,8 @@ def admit(metadata, migrations):
     assert metadata['role'] == 'susq_api' and metadata['login'] is True
     assert metadata['read_only_default'] is True
     for key in ['superuser', 'create_role', 'create_database', 'replication', 'bypass_rls',
-                'database_create', 'private_observations_select', 'private_snapshots_select']:
+                'database_create', 'private_observations_select', 'private_snapshots_select',
+                'private_contexts_select', 'private_context_references_select']:
         assert metadata[key] is False, 'Native API privilege changed: ' + key
     for key in ['writable_schemas', 'writable_tables', 'writable_sequences', 'security_definer_functions']:
         assert metadata[key] == 0, 'Native API privilege changed: ' + key

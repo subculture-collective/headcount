@@ -136,7 +136,7 @@ func TestReplayRetentionPreviewIntegration(t *testing.T) {
 	if _, err := s.PreviewReplayRetention(cancelled, policy); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled preview: %v", err)
 	}
-	if _, err := s.Pool.Exec(ctx, `TRUNCATE score_snapshots`); err != nil {
+	if _, err := s.Pool.Exec(ctx, `DELETE FROM score_snapshots`); err != nil {
 		t.Fatal(err)
 	}
 	r, err := s.PreviewReplayRetention(ctx, policy)
