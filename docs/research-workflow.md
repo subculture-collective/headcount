@@ -117,6 +117,29 @@ main/TOAST diagnostics, disposable churn evidence, candidate table settings and
 bounded routine maintenance. Production settings remain a separate rollout.
 
 
+### Frozen context cleanup
+
+The retention worker also sweeps immutable context keys in bounded transactions.
+Each batch locks at most 100 keys with `FOR UPDATE SKIP LOCKED`, then checks for
+references again in a fresh READ COMMITTED statement. It deletes only objects
+with no snapshot reference. The restricting foreign key is the final guard;
+snapshot expiry cascades bindings without deleting shared context.
+
+The context cursor advances across referenced objects as well as orphans, so
+retained objects cannot starve cleanup. Each minute has a separate five-second
+GC budget and at most ten batches, even while the snapshot sweep waits for its
+next hourly cycle. Locked rows and new keys behind the cursor are reconsidered
+on a later pass. Zero outer replay retention disables both workers' pruning.
+Cancellation rolls back the in-flight batch; earlier committed batches remain.
+
+A writer must create/reuse context and bind its snapshot in the same transaction.
+Its key-share lock protects an existing object through commit. If cleanup wins
+before that lock is acquired, the writer must retry the transaction on a missing
+object or foreign-key race; it must never ignore corruption/collision errors or
+publish a partial input. Exported packets are self-contained and survive normal
+snapshot/context expiry. Unexported expired history cannot be recreated by
+stopping cleanup or restarting an older binary.
+
 ## Export and replay
 
 The [raw measurement retention assessment](adr/002-raw-measurement-retention.md)
