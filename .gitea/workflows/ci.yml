@@ -54,6 +54,8 @@ jobs:
           echo "HEADCOUNT_TEST_DATABASE_URL=postgres://headcount_test:headcount_test@${database_host}:5432/headcount_test?sslmode=disable" >> "$GITHUB_ENV"
       - name: Verify modules
         run: go mod verify
+      - name: Native admission guard regression tests
+        run: python3 scripts/test-predeploy-ci.py
       - name: Vet
         run: go vet ./...
       - name: Unit and database integration tests

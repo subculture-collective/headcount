@@ -55,6 +55,8 @@ def main(image, revision):
             assert re.fullmatch(r'[A-Za-z0-9_.-]+\.sql', name)
             run(sql, body)
             run(sql, ("INSERT INTO schema_migrations(name) VALUES ('" + name + "');").encode())
+        private = json.loads(run(sql + ['-qAt'], b"SELECT json_build_object('contexts',has_table_privilege('susq_api','replay_contexts','SELECT,INSERT,UPDATE,DELETE'),'references',has_table_privilege('susq_api','score_snapshot_contexts','SELECT,INSERT,UPDATE,DELETE'))"))
+        assert private == {'contexts': False, 'references': False}
         run(sql, b"ALTER ROLE susq_api WITH LOGIN PASSWORD 'headcount-ci-only-password'; ALTER ROLE susq_api SET default_transaction_read_only=on;")
         api = run(['docker', 'create', '--rm', '--init', '--network', network, '--read-only', '--memory', '512m', '--cpus', '1',
                    '--pids-limit', '160', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
