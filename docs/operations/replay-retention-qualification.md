@@ -1,8 +1,9 @@
 # Replay retention qualification ledger
 
-Status: preparation in progress. No production thinning is enabled by this PR.
-Issue #24 stays open until its concrete operator checkpoint and live rollout are
-complete. The [runbook](replay-retention-rollout.md) defines that boundary.
+Scope: qualification evidence and release gates. This documentation does not
+enable production thinning. Issue #24 stays open until its concrete operator
+checkpoint and live rollout are complete. Current gate results are recorded on
+the PR. The [runbook](replay-retention-rollout.md) defines that boundary.
 
 ## Fresh consistent backup
 
@@ -13,9 +14,10 @@ production schema, retention horizon or collector configuration changed.
 
 Backup completed at `2026-11-09T17:41:54.689514+00:00`: **93,142,876,445 bytes**,
 including **573,290 replay rows**. Archive metadata records
-the exact source image. The independent full restore is running on an isolated
-matching database with no published ports. Final count comparison must follow
-`timescaledb_post_restore()`; completion and contents alone are not restore proof.
+the exact source image. The independent full restore uses an isolated matching database with no
+published ports. Its final count comparison must follow
+`timescaledb_post_restore()`; the completed comparison is recorded on the PR.
+Archive completion and contents alone are not restore proof.
 
 | Archive component | Bytes | SHA-256 |
 |---|---:|---|
@@ -77,12 +79,13 @@ The private candidate identity manifest hashes to
 and before the operator checkpoint. Moving cutoffs and new observations change
 later candidates. Referenced payload is not allocated-file shrink.
 
-## Remaining qualification
+## Release gates
 
 Before activation, require green checks on the final PR head, all eighteen
 restored counts matching, bounded deletion/retained-identity conformance on the
 copy, and exact-image candidate/retained-rollback startup rehearsals. Record their
-sanitized results on this PR and update this ledger after restore verification.
+sanitized results in the PR qualification record alongside this fixed backup
+and preview ledger.
 Only then request approval of the refreshed preview and recovery limits.
 
 Native activation must preserve the API, database and backup baseline captured
