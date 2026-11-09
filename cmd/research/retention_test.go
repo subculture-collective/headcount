@@ -33,6 +33,46 @@ func TestRetentionPreviewArguments(t *testing.T) {
 }
 
 func TestRetentionPreviewCLIIntegration(t *testing.T) {
+	s := researchTestStore(t)
+	ctx := context.Background()
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO score_snapshots VALUES(1,'2026-11-01',11,'{"private":"never-print-packet"}','{}'),(1,'2026-11-09',11,'{}','{}')`); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "preview.json")
+	args := []string{"retention-preview", "-as-of", "2026-11-09T12:00:00Z", "-out", out}
+	if err := run(args); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report store.ReplayRetentionPreview
+	if err := json.Unmarshal(b, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Total.Snapshots != 2 || report.Expired.Snapshots != 1 || report.Retained.Snapshots != 1 || strings.Contains(string(b), "never-print-packet") {
+		t.Fatal("CLI report contains wrong counts or private replay data")
+	}
+	info, err := os.Stat(out)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("report permissions: %v", err)
+	}
+	if err := run(args); err == nil {
+		t.Fatal("preview overwrote an existing report")
+	}
+	after, err := os.ReadFile(out)
+	if err != nil || string(after) != string(b) {
+		t.Fatal("existing report changed")
+	}
+	var n int
+	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM score_snapshots`).Scan(&n); err != nil || n != 2 {
+		t.Fatal("CLI preview changed database rows")
+	}
+}
+
+func researchTestStore(t *testing.T) *store.Store {
+	t.Helper()
 	raw := os.Getenv("HEADCOUNT_TEST_DATABASE_URL")
 	if raw == "" {
 		t.Skip("HEADCOUNT_TEST_DATABASE_URL not set")
@@ -65,39 +105,6 @@ func TestRetentionPreviewCLIIntegration(t *testing.T) {
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Pool.Exec(ctx, `INSERT INTO score_snapshots VALUES(1,'2026-11-01',11,'{"private":"never-print-packet"}','{}'),(1,'2026-11-09',11,'{}','{}')`); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("DATABASE_URL", u.String())
-	out := filepath.Join(t.TempDir(), "preview.json")
-	args := []string{"retention-preview", "-as-of", "2026-11-09T12:00:00Z", "-out", out}
-	if err := run(args); err != nil {
-		t.Fatal(err)
-	}
-	b, err := os.ReadFile(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var report store.ReplayRetentionPreview
-	if err := json.Unmarshal(b, &report); err != nil {
-		t.Fatal(err)
-	}
-	if report.Total.Snapshots != 2 || report.Expired.Snapshots != 1 || report.Retained.Snapshots != 1 || strings.Contains(string(b), "never-print-packet") {
-		t.Fatal("CLI report contains wrong counts or private replay data")
-	}
-	info, err := os.Stat(out)
-	if err != nil || info.Mode().Perm() != 0600 {
-		t.Fatalf("report permissions: %v", err)
-	}
-	if err := run(args); err == nil {
-		t.Fatal("preview overwrote an existing report")
-	}
-	after, err := os.ReadFile(out)
-	if err != nil || string(after) != string(b) {
-		t.Fatal("existing report changed")
-	}
-	var n int
-	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM score_snapshots`).Scan(&n); err != nil || n != 2 {
-		t.Fatal("CLI preview changed database rows")
-	}
+	return s
 }
