@@ -13,6 +13,7 @@ func (s *Scorer) RunReplayRetention(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	var cursor *store.ReplayCursor
+	var contextCursor string
 	var policy store.ReplayRetentionPolicy
 	var next time.Time
 	for {
@@ -43,6 +44,35 @@ func (s *Scorer) RunReplayRetention(ctx context.Context) {
 			cancel()
 			s.log.Info("replay retention", "scanned", scanned, "deleted", deleted)
 		}
+		if s.ReplayRetention > 0 && ctx.Err() == nil {
+			// Separate budget keeps orphan cleanup progressing even when replay
+			// pruning uses its whole time slice or waits for its hourly cycle.
+			gcCtx, gcCancel := context.WithTimeout(ctx, 5*time.Second)
+			var scanned int
+			var deleted, bytes int64
+			for range 10 {
+				batch, err := s.store.PruneReplayContexts(gcCtx, contextCursor, 100)
+				if err != nil {
+					s.log.Warn("prune replay contexts", "err", err)
+					break
+				}
+				scanned += batch.Scanned
+				deleted += batch.Deleted
+				bytes += batch.PayloadBytes
+				if batch.NextDigest != "" {
+					contextCursor = batch.NextDigest
+				}
+				if batch.Scanned < 100 {
+					contextCursor = ""
+					break
+				}
+			}
+			gcCancel()
+			if scanned > 0 {
+				s.log.Info("replay context retention", "scanned", scanned, "deleted", deleted, "payload_bytes", bytes)
+			}
+		}
+
 		select {
 		case <-ctx.Done():
 			return
