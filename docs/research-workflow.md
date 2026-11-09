@@ -22,6 +22,11 @@ The score and its immutable input/output snapshot are saved together. Reusing th
 
 The public API role cannot read `score_snapshots` or `user_observations`. The public stream response exposes only the current score, quality metadata, aggregate diagnostics and the three mechanism indices. Existing `confidence` JSON fields are retained for compatibility; the UI calls them observation coverage. A mechanism index is its strongest weighted detector, before the overall single-group cap, and is not a probability.
 
+The [immutable replay-context decision](adr/001-immutable-replay-context.md)
+specifies future reference deduplication and compatibility tests. Current
+production snapshots remain inline until its separate schema, reader, writer,
+and native rollout issues are completed.
+
 `CHATTER_RETENTION_DAYS` defaults to 30 and governs author rows and lookup-history retention. New summaries preserve true totals, creation-date resolution and pending counts. `REPLAY_RETENTION_DAYS` defaults to 7 and governs snapshots, which can be much larger. Zero disables the respective pruning. Cached scalar peer/behavior metrics remain with stream records. Measure database growth before lengthening snapshot retention. Export selected packets before expiry; exports are not automatically pruned.
 
 ## Export and replay
