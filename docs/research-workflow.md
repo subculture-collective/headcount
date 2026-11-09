@@ -83,6 +83,7 @@ Neither expired payload bytes nor dead-row estimates promise immediate file-size
 reduction. Review a fresh preview and retained research exports before any later
 production pruning checkpoint.
 
+
 ### Bounded replay retention worker
 
 The collector runs replay retention separately from scoring. Each transaction
@@ -110,6 +111,11 @@ Setting detail to zero stops further thinning; setting outer retention to zero
 stops all replay pruning. Binary/config rollback does not recreate deleted
 history: recovery requires retained backups or exported packets. Scoring cadence,
 current scores, peer metrics, author retention and raw minute series are unchanged.
+
+The [replay maintenance runbook](operations/replay-maintenance.md) explains the
+main/TOAST diagnostics, disposable churn evidence, candidate table settings and
+bounded routine maintenance. Production settings remain a separate rollout.
+
 
 ## Export and replay
 

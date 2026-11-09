@@ -70,15 +70,16 @@ type ReplayRetentionTotals struct {
 // MainTableBytes includes the main relation's auxiliary forks, excluding indexes.
 // TOASTBytes includes the TOAST relation and its indexes.
 type ReplayStorageAllocation struct {
-	MainTableBytes        int64      `json:"main_table_bytes"`
-	MainIndexBytes        int64      `json:"main_index_bytes"`
-	TOASTBytes            int64      `json:"toast_bytes"`
-	TotalAllocatedBytes   int64      `json:"total_allocated_bytes"`
-	LiveRowsEstimate      int64      `json:"live_rows_estimate"`
-	DeadRowsEstimate      int64      `json:"dead_rows_estimate"`
-	TOASTDeadRowsEstimate int64      `json:"toast_dead_rows_estimate"`
-	LastAutovacuum        *time.Time `json:"last_autovacuum"`
-	StatisticsReset       *time.Time `json:"statistics_reset"`
+	MainTableBytes        int64             `json:"main_table_bytes"`
+	MainIndexBytes        int64             `json:"main_index_bytes"`
+	TOASTBytes            int64             `json:"toast_bytes"`
+	TotalAllocatedBytes   int64             `json:"total_allocated_bytes"`
+	LiveRowsEstimate      int64             `json:"live_rows_estimate"`
+	DeadRowsEstimate      int64             `json:"dead_rows_estimate"`
+	TOASTDeadRowsEstimate int64             `json:"toast_dead_rows_estimate"`
+	LastAutovacuum        *time.Time        `json:"last_autovacuum"`
+	StatisticsReset       *time.Time        `json:"statistics_reset"`
+	Maintenance           ReplayMaintenance `json:"maintenance"`
 }
 
 // ReplayRetentionPreview is an aggregate-only report; it contains no replay data.
@@ -130,7 +131,7 @@ func (s *Store) PreviewReplayRetention(ctx context.Context, p ReplayRetentionPol
 			&out.StreamVersions, &out.FutureRows); err != nil {
 			return fmt.Errorf("preview replay selection: %w", err)
 		}
-		return view.reader().QueryRow(ctx, `
+		if err := view.reader().QueryRow(ctx, `
  SELECT pg_table_size(c.oid)-pg_total_relation_size(c.reltoastrelid),pg_indexes_size(c.oid),
         pg_total_relation_size(c.reltoastrelid),pg_total_relation_size(c.oid),
         coalesce(s.n_live_tup,0),coalesce(s.n_dead_tup,0),coalesce(t.n_dead_tup,0),
@@ -142,7 +143,12 @@ func (s *Store) PreviewReplayRetention(ctx context.Context, p ReplayRetentionPol
  WHERE c.oid='public.score_snapshots'::regclass`).Scan(
 			&out.Storage.MainTableBytes, &out.Storage.MainIndexBytes, &out.Storage.TOASTBytes,
 			&out.Storage.TotalAllocatedBytes, &out.Storage.LiveRowsEstimate, &out.Storage.DeadRowsEstimate,
-			&out.Storage.TOASTDeadRowsEstimate, &out.Storage.LastAutovacuum, &out.Storage.StatisticsReset)
+			&out.Storage.TOASTDeadRowsEstimate, &out.Storage.LastAutovacuum, &out.Storage.StatisticsReset); err != nil {
+			return err
+		}
+		var err error
+		out.Storage.Maintenance, err = view.replayMaintenance(ctx)
+		return err
 	})
 	if err != nil {
 		return ReplayRetentionPreview{}, fmt.Errorf("preview replay retention: %w", err)
