@@ -141,8 +141,13 @@ func TestHydratedExportCLIIntegration(t *testing.T) {
 		}
 	}
 	// Export is portable even after its database rows and contexts disappear.
-	if _, err := s.Pool.Exec(ctx, `DELETE FROM score_snapshots; DELETE FROM replay_contexts`); err != nil {
-		t.Fatal(err)
+	pruned, err := s.PruneReplayBatch(ctx, store.ReplayRetentionPolicy{AsOf: in.ObservedAt.Add(8 * 24 * time.Hour), Detail: 48 * time.Hour, Retention: 7 * 24 * time.Hour}, nil, 100)
+	if err != nil || pruned.Deleted != 2 {
+		t.Fatalf("normal snapshot expiry: %+v %v", pruned, err)
+	}
+	collected, err := s.PruneReplayContexts(ctx, "", 100)
+	if err != nil || collected.Deleted != 2 {
+		t.Fatalf("normal context expiry: %+v %v", collected, err)
 	}
 	if err := run([]string{"replay", "-in", referenced, "-out", filepath.Join(dir, "after-expiry.json")}); err != nil {
 		t.Fatal(err)
