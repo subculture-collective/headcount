@@ -36,10 +36,6 @@ func (s *Store) BehaviorStats(ctx context.Context, streamID int64) (map[string]f
 	return out, nil
 }
 
-func (s *Store) PruneSnapshots(ctx context.Context, before time.Time) error {
-	_, err := s.Pool.Exec(ctx, `DELETE FROM score_snapshots WHERE observed_at<$1`, before)
-	return err
-}
 func (s *Store) PruneObservations(ctx context.Context, before time.Time) error {
 	_, err := s.Pool.Exec(ctx, `DELETE FROM user_observations WHERE checked_at<$1`, before)
 	return err
