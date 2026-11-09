@@ -94,8 +94,53 @@ func TestScoreSnapshotRoundTripIntegration(t *testing.T) {
 		t.Fatalf("behavior references: %+v %v", bp, err)
 	}
 	exec(`UPDATE chat_minutes SET top_text_count=50`)
+	exec(`INSERT INTO channels(id,login,display_name,first_seen_at) VALUES(2,'peer-fixture','Peer fixture',$1)`, at.Add(-5*time.Hour))
+	exec(`INSERT INTO streams(id,channel_id,started_at,first_seen_at,last_seen_at,ended_at,game_id,game_name,language)
+ VALUES(20,2,$1,$1,$2,$2,'1','Fixture category','en')`, at.Add(-5*time.Hour), at.Add(-2*time.Hour))
+	exec(`INSERT INTO stream_peer_metrics(stream_id,metric_version,source_last_seen,language,game_id,game_name,median_viewers,chatters_per_k)
+ VALUES(20,2,$1,'en','1','Fixture category',1000,20)`, at.Add(-2*time.Hour))
+	exec(`INSERT INTO stream_behavior_metrics(stream_id,source_last_seen,metrics) VALUES(20,$1,'{"p95_messages":4}')`, at.Add(-2*time.Hour))
+	scorer.ReferencedReplays = true
 	if err := scorer.scoreStream(ctx, store.StreamRef{ID: 10}); err != nil {
 		t.Fatal(err)
+	}
+	stored, err := db.ReplaySnapshot(ctx, 10, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.StorageVersion != 2 || len(stored.Contexts) != 2 || stored.InputDigest == nil {
+		t.Fatal("opt-in scorer did not atomically persist both frozen reference fields")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(stored.Input, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, binding := range stored.Contexts {
+		if _, present := fields[binding.Field]; present {
+			t.Fatal("referenced field also stored inline")
+		}
+		var envelope struct {
+			Value json.RawMessage `json:"value"`
+		}
+		if err := json.Unmarshal(binding.Context.Canonical, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		fields[binding.Field] = envelope.Value
+	}
+	assembled, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var referenced Snapshot
+	var referencedOutput Result
+	if err := json.Unmarshal(assembled, &referenced); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(stored.Output, &referencedOutput); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(Evaluate(referenced, nil), referencedOutput) {
+		t.Fatal("opt-in scorer changed frozen evaluation")
 	}
 	if replayed := Evaluate(frozen, nil); !reflect.DeepEqual(original, replayed) {
 		t.Fatal("later observations changed frozen replay")
