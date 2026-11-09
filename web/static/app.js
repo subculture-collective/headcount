@@ -10,7 +10,7 @@ const COMPONENTS = {
   periodic_spikes: ['Periodic spikes', 'Viewer spikes that repeat at a fixed interval and return to the same baseline'],
   synchronized_spikes: ['Synchronized spikes', 'Viewer spikes that start in the same minutes as another channel’s, under a heuristic timing model'],
   spike_chat_lift: ['Chat during spikes', 'Whether chat grows when viewers spike, compared with the minutes just before each spike; passive viewers may also stay quiet'],
-  chat_engagement: ['Chat engagement', 'Chatters per 1,000 viewers compared with streams of the same size, language and category'],
+  chat_engagement: ['Chat engagement', 'Median chatters per minute per 1,000 viewers compared with streams of the same size, language and category'],
   follower_purge: ['Follower net losses', 'Large net follower losses; the cause and individual events are unknown'],
   chatter_accounts: ['Chatter accounts', 'Share of resolved creation dates under 30 days old; unavailable lookups are not suspicion evidence'],
   shared_accounts: ['Shared accounts', 'Chatters with accounts under 90 days old who also chatted in two or more other tracked channels that week'],
@@ -426,12 +426,12 @@ async function engagementView() {
   const langName = (l) => { try { return names.of(l); } catch { return l; } };
   app.innerHTML = `
     <h1>Engagement map</h1>
-    <p class="sub">Recently scored streams with usable chat measurements, placed by audience size and how many of those viewers chat.
-      When enough measurements are available, the grey line summarizes engagement at each audience size. Streams far below the band have
-      a big audience but a quiet chat, which is what bot viewers produce. That is a signal, not proof: chat can also be quiet
-      because of restricted chat, a non-chatty audience, or embedded and muted players.</p>
+    <p class="sub">Recently scored streams with usable chat measurements. Median activity describes a typical eligible minute;
+      aggregate activity also retains conversation during intermittent bursts. Neither measures the share of unique viewers who chat.</p>
+    <p class="muted small">Colours show an uncalibrated anomaly index, not a bot probability or fake-audience percentage.
+      Quiet chat alone can contribute at most 30 points; a zero median does not mean the whole stream was silent.</p>
     <div class="filters" role="group" aria-label="Filters">
-      <label>Window <select id="em-days">
+      <label>Scores updated within <select id="em-days">
         ${[['1', 'Last 24 hours'], ['7', 'Last 7 days'], ['14', 'Last 14 days']].map(([v, t]) => `<option value="${v}"${v === days ? ' selected' : ''}>${t}</option>`).join('')}
       </select></label>
       <label>Language <select id="em-lang"><option value="">All languages (${data.points.length})</option>
@@ -440,24 +440,43 @@ async function engagementView() {
       <label>Category <select id="em-cat"><option value="">All categories</option>
         ${cats.map(([c, k]) => `<option value="${esc(c)}">${esc(c)} (${k})</option>`).join('')}
       </select></label>
-      ${data.truncated ? `<span class="muted small">showing the latest ${n(data.limit)} streams</span>` : ''}
+      <label>Activity <select id="em-metric">
+        <option value="median">Median chatters/min per 1k viewers</option>
+        <option value="aggregate">Chat-author min per 1k viewer-min</option>
+      </select></label>
     </div>
+    <p class="muted small" id="em-sample">${n(data.points.length)} displayed streams${data.sample ? ` from ${n(data.sample.channels)} channels` : ''}.
+      ${data.sample?.oldest_scored_at ? `Scores updated ${dateTime(data.sample.oldest_scored_at)} to ${dateTime(data.sample.newest_scored_at)}; streams may have started earlier.` : ''}
+      ${data.truncated ? `The ${n(data.limit)}-stream cap was reached; this is a selected recent sample, not all streams in the window.` : ''}</p>
     <div class="card" id="em"></div>
-    <p class="caption">The reference line describes measurements in this window (log-log, outliers removed). It is separate from the scorer’s
-      comparison with independent past streams. Pick a category to narrow the map. Hover a point for the scorer’s expected
-      value and distance in standard deviations (SD), when available; click to open the stream. Measurements remain visible
-      while independent past peers are still accumulating.</p>`;
+    <p class="caption">The reference line describes this selection, using the latest measured stream per channel and a robust fit.
+      Bands show residual spread, not detection confidence intervals. It is separate from the scorer’s comparison with independent past streams.
+      Hover a point for eligible minutes, silent minutes and messages when available. Aggregate activity is a diagnostic and does not change the score.
+      Older scores retain their median measurements while the newer summaries accumulate.</p>`;
   const box = document.getElementById('em');
   const langSel = document.getElementById('em-lang');
   const catSel = document.getElementById('em-cat');
+  const metricSel = document.getElementById('em-metric');
   if (cats.some(([c]) => c === wantCat)) catSel.value = wantCat;
-  const draw = () => renderEngagementMap(box, data, langSel.value, catSel.value);
+  if (langs.some(([l]) => l === params.get('lang'))) langSel.value = params.get('lang');
+  if (params.get('metric') === 'aggregate') metricSel.value = 'aggregate';
+  const selectedURL = (days) => {
+    const next = new URLSearchParams({ days });
+    if (catSel.value) next.set('cat', catSel.value);
+    if (langSel.value) next.set('lang', langSel.value);
+    if (metricSel.value === 'aggregate') next.set('metric', 'aggregate');
+    return `/engagement?${next}`;
+  };
+  const draw = () => {
+    renderEngagementMap(box, data, langSel.value, catSel.value, metricSel.value);
+    history.replaceState(null, '', selectedURL(days));
+  };
   draw();
   langSel.addEventListener('change', draw);
   catSel.addEventListener('change', draw);
-  document.getElementById('em-days').addEventListener('change', (e) => { 
-    navigate(`/engagement?days=${e.target.value}${catSel.value ? `&cat=${encodeURIComponent(catSel.value)}` : ''}`);
-  });
+  metricSel.addEventListener('change', draw);
+  document.getElementById('em-days').addEventListener('change', (e) => navigate(selectedURL(e.target.value)));
+
 }
 
 // ---------- stream ----------
@@ -769,6 +788,8 @@ function aboutView() {
   setTitle('How the sus quotient works');
   app.innerHTML = `<div class="prose">
     <h1>How scoring works</h1>
+    <p class="note">The sus quotient is an uncalibrated anomaly index. It is not a bot probability, an estimate of fake audience share,
+      or evidence of who caused the activity. Observation coverage measures available data, not detection accuracy.</p>
     <p class="sub">Every channel that reaches the Twitch top 200 is tracked from then on. Each minute the collector records its
       viewer count (Twitch Helix API), its chat activity (anonymous IRC), and its follower total.</p>
     <p>When a stream ends, ${Object.keys(COMPONENTS).length} detectors each rate one kind of evidence from 0 to 1. They are combined with fixed weights
@@ -778,7 +799,12 @@ function aboutView() {
       down for channels whose Twitch count jumps erratically between updates.
       Live streams get a provisional score after an hour.</p>
     <p>Chat engagement is compared with streams of a similar size in the same language, then adjusted for the stream’s main
-      category and for similar categories (social, creative, gambling, sports or games). A category with few recent streams
+      category and for similar categories (social, creative, gambling, sports or games). Engagement is the median of
+      per-minute unique chat authors divided by viewers, times 1,000, over healthy paired minutes with at least 100 viewers,
+      excluding recorded restrictions and distribution context. At least 30 eligible minutes covering half the observed span are required.
+      A zero median can coexist with many messages in the other minutes. The engagement map also shows aggregate chat-author minutes
+      per 1,000 viewer-minutes and the silent-minute share; these diagnostics do not change the score. The baseline starts from
+      median slopes across audience-size bins and filters residuals using median absolute deviation before fitting the retained peers. A category with few recent streams
       leans on its group, and no category can shift the baseline by more than 1.5 standard deviations, to limit contamination. Peers are past completed streams from other channels, with one stream per channel. Systematic contamination can still affect the baseline.</p>
     <ul>${Object.entries(COMPONENTS).map(([k, [name, desc]]) => `<li><b>${name}</b> (weight ${WEIGHTS[k]}): ${desc}.</li>`).join('')}</ul>
     <p><b>Observation coverage</b> reflects sampled viewer minutes, healthy chat minutes, account-date completion and detector availability. It does not measure detection accuracy. A channel’s
@@ -786,7 +812,7 @@ function aboutView() {
       a few, so one stream cannot put a channel at the top.</p>
     <h2>Limits</h2>
     <ul>
-      <li>The weights are hand-set and have not been calibrated against confirmed cases.</li>
+      <li>The weights and thresholds are hand-set. Detection accuracy has not been established on independently reviewed future episodes; scores from different scoring versions are not directly comparable.</li>
       <li>Twitch counts can be delayed. The exact refresh schedule is unknown; repeated counts remain observations and missing polls remain gaps.</li>
       <li>Ad breaks, front-page placement, embeds, raids and chat restrictions all change these numbers for innocent reasons.
         Known raids, category changes, chat restrictions and observed Shared Chat are considered. Unknown referrals, Drops, ads and promotions can still confound the score.</li>

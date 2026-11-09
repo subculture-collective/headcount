@@ -1,8 +1,10 @@
 package api
 
 import (
+	"fmt"
 	"math"
 	"testing"
+	"time"
 )
 
 func TestFitEngagementRecoversLine(t *testing.T) {
@@ -32,6 +34,46 @@ func TestFitEngagementRecoversLine(t *testing.T) {
 	}
 	if math.Abs(f.SD-0.1) > 0.02 {
 		t.Errorf("sd=%.3f, want about 0.1", f.SD)
+	}
+}
+
+func TestEngagementFitsMatchSelectionAndCountChannelsOnce(t *testing.T) {
+	cat := "Music"
+	var points []engagementPoint
+	for _, lang := range []string{"en", "ja"} {
+		for i := range 20 {
+			v := 100 * math.Pow(1.15, float64(i))
+			a := 3.0
+			if lang == "ja" {
+				a = 1
+			}
+			rate := math.Exp(a-.3*math.Log(v)+.1*float64(i%2*2-1)) - .1
+			points = append(points, engagementPoint{ChannelID: fmt.Sprintf("%s%d", lang, i), Language: lang, GameName: &cat,
+				MedianViewers: v, ChattersPerK: rate, AggregatePerK: &rate, ScoredAt: time.Unix(1000, 0)})
+		}
+	}
+	for range 40 {
+		old := points[0]
+		old.ChattersPerK = 1000
+		old.ScoredAt = time.Unix(0, 0)
+		points = append(points, old)
+	}
+	for _, aggregate := range []bool{false, true} {
+		fits := engagementFits(points, aggregate)
+		for _, lang := range []string{"en", "ja"} {
+			f, ok := fits[selectionFitKey(lang, cat)]
+			want := 3.0
+			if lang == "ja" {
+				want = 1
+			}
+			if !ok || f.N != 20 || math.Abs(f.A-want) > .2 {
+				t.Fatalf("wrong population for %s: %+v", lang, f)
+			}
+		}
+	}
+	// Many streams from one channel must not supply independent support.
+	if fits := engagementFits(points[40:], false); len(fits) != 0 {
+		t.Fatalf("repeated channel invented a line: %+v", fits)
 	}
 }
 

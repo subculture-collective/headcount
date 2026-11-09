@@ -51,7 +51,7 @@ detectors each rate one kind of evidence from 0 to 1:
 | `periodic_spikes` | 0.6 | Upward viewer spikes that repeat at a fixed period and return to baseline |
 | `synchronized_spikes` | 0.5 | Spikes that start in the same minutes as another channel's more often than chance (binomial test, Bonferroni-corrected; discounted when many channels spike together) |
 | `spike_chat_lift` | 0.5 | Chat does not grow when viewers spike, comparing each unexplained spike with the minutes just before it; needs several material spikes |
-| `chat_engagement` | 0.5 | Chatters per 1k viewers far below a peer baseline fitted on log(viewers), per language, adjusted for the stream's category |
+| `chat_engagement` | 0.5 | Median chatters per minute per 1k viewers far below a peer baseline fitted on log(viewers), per language, adjusted for the stream's category |
 | `follower_purge` | 0.4 | Large observed net follower losses; removal cause unknown |
 | `chatter_accounts` | 0.4 | High share of resolved creation dates under 30 days old; requires 80% date coverage |
 | `shared_accounts` | 0.4 | Chatters with accounts under 90 days old who also chatted in two or more other tracked channels in the week before |
@@ -61,7 +61,7 @@ detectors each rate one kind of evidence from 0 to 1:
 | `chat_repetition` | 0.15 | Share of chat matching the most repeated non-command, non-utility message |
 | `start_ramp` | 0.1 | Viewers arrive implausibly fast after going live |
 
-Scoring version 9 groups shared causes conservatively: audience shape, weak
+Scoring version 10 groups shared causes conservatively: audience shape, weak
 spike response and low engagement share an **audience** group; repetition and
 account features share **chat**; net follower anomalies share **follows**. Each
 group contributes its strongest weighted component. Groups combine by noisy-OR,
@@ -82,9 +82,30 @@ The chat baseline uses the same healthy paired raw minutes as target scoring,
 with at least 100 viewers and 30 eligible minutes. It fits one past completed
 stream per other channel in the prior seven days, by language (global fallback),
 with category/family offsets shrunk by 10 pseudo-streams and capped at 1.5 SD.
+Version 10 initializes the line from median slopes between at most 20 audience-size
+bin medians. A median absolute deviation filter removes distant residuals before
+a least-squares fit of the retained peers. A degenerate or undersupported fit
+remains unavailable. This reduces the effect of extreme peers without establishing
+detection accuracy or resistance to every contaminated population.
 Per-stream peer metrics are cached with their source timestamp; stale/reopened
 streams are excluded. Historical rows without chat-health provenance do not
 seed the new baseline.
+
+Engagement keeps the median per-minute chatter/viewer ratio as its scoring input.
+Each new score also saves eligible and silent minute counts, messages in eligible
+minutes, and aggregate chat-author minutes per 1,000 viewer-minutes. The aggregate
+is `1000 * sum(minute_chatters) / sum(minute_viewers)` over the same eligible
+minutes. It is a diagnostic, not an additional detector or a count of unique
+viewers. Summaries remain available even when past peers are insufficient.
+
+The engagement map offers both summaries. Zeros occupy a separate row below the
+positive log scale; small positive values keep their actual positions. Reference
+lines match the selected language, category and metric, with one latest measured
+stream per channel. A selection with insufficient support has no line. Bands show
+residual spread, not confidence intervals for detection. The window selects score
+updates, capped at the latest 3,000 streams. The page reports actual score-update
+timestamps and truncation; this sample does not represent all Twitch streams.
+Older scores retain their median measurements and have unavailable new summaries.
 
 Restrictions are applied to the affected episode windows. Public settings and
 Shared Chat observations expire after 15 minutes. Known distribution or
@@ -178,8 +199,25 @@ See [CI deployment and recovery](docs/ci-deployment.md) for the API scope and da
 ### Tests
 
 ```sh
-go test ./...
+go test -p 1 -race ./...
+# Optional real-browser map checks (Node 18+ and Chromium):
+node scripts/check-engagement-map.mjs
+WIDTH=390 THEME=light node scripts/check-engagement-map.mjs
 ```
+
+Database tests use `HEADCOUNT_TEST_DATABASE_URL` pointing to a disposable
+TimescaleDB instance. Test packages run sequentially because their isolated
+databases share the cluster-wide API role. The browser check starts and closes
+its own loopback fixture server and Chromium profile; it uses no live data.
+
+Version 10 needs a native collector release as well as the dashboard API update.
+The API CI deployment does not restart the collector. The existing peer metric
+remains version 1 because its median definition is unchanged; no database
+migration is required. The collector gradually rescores older finished streams,
+which adds summaries and applies the robust baseline. Scores from version 9 and
+10 may coexist during that pass. Retain the previous collector image for rollback;
+replaying a version-9 snapshot with version-10 code is a new evaluation, not an
+exact replay of the old algorithm.
 
 ## Known limits
 
