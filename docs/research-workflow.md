@@ -83,6 +83,10 @@ Neither expired payload bytes nor dead-row estimates promise immediate file-size
 reduction. Review a fresh preview and retained research exports before any later
 production pruning checkpoint.
 
+The [replay maintenance runbook](operations/replay-maintenance.md) explains the
+main/TOAST diagnostics, disposable churn evidence, candidate table settings and
+bounded routine maintenance. Production settings remain a separate rollout.
+
 ## Export and replay
 
 The [raw measurement retention assessment](adr/002-raw-measurement-retention.md)
