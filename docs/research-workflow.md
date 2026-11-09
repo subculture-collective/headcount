@@ -85,7 +85,12 @@ production pruning checkpoint.
 
 ## Export and replay
 
-Build the tool with `go build -o /tmp/headcount-research ./cmd/research`. It also ships in the existing container image because the Dockerfile builds all commands. `DATABASE_URL` is used only by export and the explicit context-writing command. Keep it in the existing environment/secret store.
+The [raw measurement retention assessment](adr/002-raw-measurement-retention.md)
+records current chunk sizes, scoring/backfill windows and possible chart-only
+archives. Raw samples keep their existing retention and minute cadence; a future
+expiry horizon needs a separate historical-research decision.
+
+Build the tool with `go build -o /tmp/headcount-research ./cmd/research`. It also ships in the existing container image because the Dockerfile builds all commands. `DATABASE_URL` is used by export, retention preview and the explicit context-writing command. Keep it in the existing environment/secret store.
 
 ```sh
 mkdir -p research_exports/pool
