@@ -1,13 +1,16 @@
 # Dashboard CI delivery
 
-The existing required `CI / Verify` job retains module verification, vet, race
-and disposable database integration tests, and builds of every command. It also
-builds the actual production image and exercises its API against an isolated
+Pull requests are verified on GitHub by `.github/workflows/mirror-ci.yml`; its
+`Mirror CI gate` check is required before a merge. `main` is copied to Gitea,
+where the `CI / Verify` job in `.gitea/workflows/ci.yml` repeats the checks and
+deploys. Both run module verification, vet, race
+and disposable database integration tests, and builds of every command. They also
+build the actual production image and exercise its API against an isolated
 TimescaleDB fixture using the read-only `susq_api` role. This checks every static
 asset, the native JavaScript import versioning, rendered pages, health and the
 uncached build marker. No collector or production credential is used in the fixture.
 
-Successful canonical-main pushes and manual workflow dispatches receive and
+Successful main pushes on Gitea and manual workflow dispatches there receive and
 activate only service `api` in Compose project `headcount` on Kvant. The existing
 collector, database, volume and backup service retain their native procedures.
 The image still defaults to the collector for those procedures; the reviewed
@@ -57,7 +60,7 @@ The scoped SSH key permits only Kvant's verified LAN/default Docker bridge
 sources, the pinned receiver and the `headcount-api` profile. It refuses a shell
 and collector selection. Gitea stores only `HOMELAB_DEPLOY_KEY` and
 `HOMELAB_KNOWN_HOSTS`; API and collector credentials stay in the existing private
-`/home/onnwee/Work/Subcult/sus-quotient/.env`. The baseline interpolates only the
+`/home/onnwee/Work/Subcult/headcount/.env`. The baseline interpolates only the
 API password and trusted-proxy setting, without loading that file as an API env_file.
 The homelab operator owns key review/rotation on February 3, 2027.
 
