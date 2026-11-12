@@ -63,7 +63,7 @@ func putReplayContext(ctx context.Context, tx pgx.Tx, c ReplayContext) (bool, in
 	if err := c.validate(); err != nil {
 		return false, 0, err
 	}
-	tag, err := tx.Exec(ctx, `INSERT INTO replay_contexts(digest,kind,context_schema,canonical) VALUES($1,$2,$3,$4) ON CONFLICT(digest) DO NOTHING`, c.Digest, c.Kind, c.Schema, c.Canonical)
+	tag, err := tx.Exec(ctx, `INSERT INTO replay_contexts(digest,kind,context_schema,canonical) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, c.Digest, c.Kind, c.Schema, c.Canonical)
 	if err != nil {
 		return false, 0, err
 	}
