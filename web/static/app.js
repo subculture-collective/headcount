@@ -294,6 +294,42 @@ function pageList(page, pages) {
   return out;
 }
 
+// The pack's chart motif (studio/brands/headcount/build.py): fixed sample values, no real channel.
+const SAMPLE_VIEWERS = [0.30, 0.32, 0.31, 0.34, 0.36, 0.35, 0.52, 0.71, 0.86, 0.92, 0.95, 0.93, 0.96, 0.94, 0.97];
+const SAMPLE_CHATTERS = [0.20, 0.22, 0.21, 0.23, 0.24, 0.23, 0.25, 0.24, 0.26, 0.25, 0.24, 0.26, 0.25, 0.24, 0.25];
+const SAMPLE_QUOTIENT = [0, 0, 0, 1, 0, 1, 2, 3, 3, 3, 3, 2, 3, 3, 3];
+
+function sampleChart() {
+  const w = 320, h = 72, top = 4, pad = 12, step = (w - pad * 2) / (SAMPLE_VIEWERS.length - 1), bar = step * 0.7;
+  const points = (series) => series.map((v, i) => `${(pad + i * step).toFixed(1)},${(top + h - v * h).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 ${w} ${top + h + 22}" aria-hidden="true" focusable="false">
+    ${[0, 1, 2, 3, 4].map((i) => `<path class="gridline" d="M0 ${(top + h * i / 4).toFixed(1)}H${w}"/>`).join('')}
+    <polyline class="line" points="${points(SAMPLE_VIEWERS)}" stroke="var(--series-1)"/>
+    <polyline class="line" points="${points(SAMPLE_CHATTERS)}" stroke="var(--series-2)"/>
+    ${SAMPLE_QUOTIENT.map((step4, i) => `<rect x="${(pad + i * step - bar / 2).toFixed(1)}" y="${top + h + 9}" width="${bar.toFixed(1)}" height="8" rx="2" fill="var(--q${step4 + 1})"/>`).join('')}
+  </svg>`;
+}
+
+// What the site is, for a reader who has never seen it. Shown on the first page of the board only.
+function introPanel() {
+  return `<section class="intro" aria-label="About Headcount">
+      <div class="intro-copy">
+        <p class="eyebrow">Twitch top 200 / by SUBCULT</p>
+        <p class="tagline">Counting who is actually in the room.</p>
+        <p class="lede">Headcount tracks every Twitch channel once it reaches the top 200 and scores each stream for patterns
+          that view-bots, follow-bots and chat-bots produce. The score is the <b>sus quotient</b>, from 0 to 100. A high
+          quotient is a reason to look, not a verdict. <a href="/about">How scoring works</a></p>
+      </div>
+      <figure class="intro-chart">
+        ${sampleChart()}
+        <figcaption>
+          <span class="legend compact"><span><i style="background:var(--series-1)"></i>Viewers</span><span><i style="background:var(--series-2)"></i>Chatters</span><span><i class="ramp"></i>Quotient</span></span>
+          <span class="muted small">Sample values, not a real channel: viewers jump, chat stays flat and the quotient climbs.</span>
+        </figcaption>
+      </figure>
+    </section>`;
+}
+
 async function leaderboardView(current) {
   setTitle('');
   const params = boardParams();
@@ -331,6 +367,7 @@ async function leaderboardView(current) {
     </nav>` : '';
 
   app.innerHTML = `
+    ${page === 1 ? introPanel() : ''}
     <h1>Leaderboard</h1>
     <p class="sub">Channels that have reached the Twitch top 200. A high quotient means the data has patterns that bots
       produce; it is not proof of botting.</p>

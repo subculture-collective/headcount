@@ -37,6 +37,10 @@
   --wash-strong: color-mix(in srgb, var(--hc-fg) 9%, transparent);
   --label: 500 11px/1.4 var(--hc-font-label);
 }
+/* On paper the bars use the second ramp step, the amber that still reaches 3:1 on the panel (3.31), and
+   the track drops to the page colour so the fill keeps 3:1 against it (3.01). */
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .viz-root { --meter-fill: var(--hc-q2); --meter-track: var(--hc-bg); } }
+:root[data-theme="light"] .viz-root { --meter-fill: var(--hc-q2); --meter-track: var(--hc-bg); }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
@@ -58,12 +62,12 @@ a { color: inherit; }
   position: sticky; top: 0; z-index: 5;
 }
 .brand { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
-.brand .mark { width: 28px; height: 28px; flex: none; }
+.brand .mark { width: 34px; height: 34px; flex: none; }
 .brand .mark .ink { fill: var(--hc-fg); }
 .brand .mark .hollow { fill: none; stroke: var(--hc-fg); stroke-width: 1.2; }
 .brand .mark .slash { stroke: var(--hc-accent); stroke-width: 2.8; stroke-linecap: round; }
 .brand .word {
-  font: 700 26px/1 var(--hc-font-display); letter-spacing: 0.04em; text-transform: uppercase;
+  font: 700 27px/1 var(--hc-font-display); letter-spacing: 0.04em; text-transform: uppercase;
   color: var(--hc-wordmark);
 }
 .top nav { display: flex; gap: 22px; align-self: stretch; }
@@ -80,6 +84,23 @@ h1 { font: 700 34px/1.1 var(--hc-font-display); margin: 0 0 6px; letter-spacing:
 h2 { font: 700 21px/1.2 var(--hc-font-display); margin: 30px 0 10px; letter-spacing: 0.01em; }
 .sub { color: var(--text-secondary); margin: 0 0 20px; }
 .muted { color: var(--text-muted); }
+
+.intro {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 380px); gap: 24px 48px; align-items: center;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--hc-radius-panel);
+  padding: 16px 24px; margin-bottom: 24px;
+}
+.intro p { margin: 0; }
+.intro .eyebrow { font: var(--label); text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 8px; }
+.intro .tagline { font: 700 46px/1.02 var(--hc-font-display); letter-spacing: 0.005em; margin-bottom: 12px; }
+.intro .lede { color: var(--text-secondary); font-size: 15px; max-width: 62ch; }
+.intro .lede b { color: var(--text-primary); }
+.intro .lede a { color: var(--hc-accent-ink); white-space: nowrap; }
+.intro-chart { margin: 0; }
+.intro-chart svg { display: block; width: 100%; height: auto; }
+.intro-chart figcaption { display: grid; gap: 4px; margin-top: 8px; }
+.intro-chart .legend { margin: 0; }
+.legend i.ramp { background: linear-gradient(90deg, var(--q1) 0 25%, var(--q2) 25% 50%, var(--q3) 50% 75%, var(--q4) 75%); height: 6px; vertical-align: 1px; }
 
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 24px; }
 .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--hc-radius-panel); padding: 14px 16px 12px; }
@@ -277,6 +298,8 @@ th a.sort.active .arrow { opacity: 1; color: var(--hc-accent-ink); }
   .top nav { flex-wrap: wrap; gap: 6px 14px; align-self: auto; }
   .top nav a { padding: 4px 0 2px; }
   main { padding: 16px; }
+  .intro { grid-template-columns: 1fr; padding: 16px; }
+  .intro .tagline { font-size: 36px; }
   .comp { grid-template-columns: 1fr 1fr 60px; }
 }
 

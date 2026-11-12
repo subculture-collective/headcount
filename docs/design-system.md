@@ -66,10 +66,11 @@ Headings are sentence case. Numbers use tabular figures (`.num`, tiles, counters
 
 ## Components
 
-- **Header:** panel background, mark and wordmark at left, nav in label type with a 3px amber underline on the active page, search at right.
+- **Header:** panel background, mark (34px; the full mark starts at 33px) and wordmark at left, nav in label type with a 3px amber underline on the active page, search at right.
+- **Intro:** a panel above the first page of the leaderboard: the tag in label type, the line “Counting who is actually in the room.” in display type, one paragraph on what the site tracks and what the sus quotient is, and the pack's sample chart (viewers jump, chatters stay flat, quotient bars below). The chart uses the pack's fixed sample values and is captioned as a sample; it never shows a real channel.
 - **Tile:** panel, 6px radius, number in display type above a label. One number per tile.
 - **Table:** panel with a line border; headers in label type; rows open their link on click.
-- **Meter:** quotient bar in `--meter-fill` on `--meter-track`, value beside it.
+- **Meter:** quotient bar in `--meter-fill` on `--meter-track`, value beside it. Dark: `--hc-q3` on `--hc-raised` (6.77:1 on the panel). Light: `--hc-q2` on `--hc-bg`, the amber step that reaches 3:1 on paper (3.31:1 on the panel, 3.01:1 on the track); the brand amber itself is 1.83:1 there.
 - **Note:** panel with a 3px amber left rule, for caveats about the data.
 - **Primary button:** amber fill, dark text, 4px radius. One per view (Replay).
 - **Focus:** a 2px amber outline on every focusable element.
