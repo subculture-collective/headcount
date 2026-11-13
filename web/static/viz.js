@@ -45,12 +45,30 @@ const fmtTick = (v) => (v < 1 ? String(+v.toPrecision(2)) : compact(v));
 export function renderEngagementMap(container, data, lang, cat = '', metric = 'median') {
   const aggregate = metric === 'aggregate';
   const rate = (p) => aggregate ? p.aggregate_per_k : p.chatters_per_k;
-  const pts = data.points.filter((p) => (!lang || p.language === lang) && (!cat || p.game_name === cat))
+  const measured = data.points.filter((p) => (!lang || p.language === lang) && (!cat || p.game_name === cat))
     .filter((p) => Number.isFinite(p.median_viewers) && p.median_viewers > 0 && Number.isFinite(rate(p)) && rate(p) >= 0);
+  // A log scale has no zero, so zero-activity streams go in a table below
+  // the chart rather than in a crowded row along its bottom edge.
+  const pts = measured.filter((p) => rate(p) > 0);
+  const zeros = measured.filter((p) => rate(p) === 0).sort((a, b) => b.median_viewers - a.median_viewers);
+  const zeroLabel = aggregate ? 'aggregate activity' : 'median activity';
+  const appendZeroTable = () => {
+    if (!zeros.length) return;
+    const zt = document.createElement('details');
+    zt.className = 'table-view';
+    zt.innerHTML = `<summary>Table: the ${zeros.length} ${zeros.length === 1 ? 'stream' : 'streams'} with zero ${zeroLabel}, largest audience first</summary>
+    <table><thead><tr><th>Channel</th><th>Language</th><th class="r">Median viewers</th><th class="r">Expected / 1k</th>
+      <th class="r">SD from expected</th><th class="r">Quotient</th></tr></thead>
+    <tbody>${zeros.map((p) => `<tr data-href="/stream/${p.stream_id}"><td><a href="/stream/${p.stream_id}">${esc(p.display_name)}</a>${p.final ? '' : ' <span class="muted">(live)</span>'}</td>
+      <td>${esc(p.language)}</td><td class="r num">${n(p.median_viewers)}</td><td class="r num">${engagementValue(p.expected_per_k)}</td>
+      <td class="r num">${dec(p.z)}</td><td class="r num">${q(p.quotient)}</td></tr>`).join('')}</tbody></table>`;
+    container.appendChild(zt);
+    zt.querySelectorAll('tbody tr').forEach((tr) => tr.addEventListener('click', () => { navigate(tr.dataset.href); }));
+  };
   const key = lang && cat ? `selection:${JSON.stringify([lang, cat])}` : cat ? `cat:${cat}` : lang;
   const fit = (aggregate ? data.aggregate_fits : data.fits)?.[key];
   container.innerHTML = '';
-  if (!pts.length) {
+  if (!measured.length) {
     container.innerHTML = '<div class="empty">No measurements for this selection. Aggregate activity is available after a stream is scored with the activity summary.</div>';
     return;
   }
@@ -70,10 +88,9 @@ export function renderEngagementMap(container, data, lang, cat = '', metric = 'm
   }
   const note = document.createElement('p');
   note.className = 'muted small';
-  const zeroCount = pts.filter((p) => rate(p) === 0).length;
-  note.textContent = `${zeroCount} ${zeroCount === 1 ? 'stream has' : 'streams have'} zero ${aggregate ? 'aggregate activity' : 'median activity'}. Zero values occupy a separate row below the positive log scale. ${aggregate ? 'Aggregate activity counts chat-author minutes per 1,000 viewer-minutes; it does not change the score.' : 'A zero median means at least half the eligible minutes had no chatters; chat can still be active in other minutes.'}`;
+  note.textContent = `${zeros.length} ${zeros.length === 1 ? 'stream has' : 'streams have'} zero ${zeroLabel}. A log scale cannot show zero, so ${zeros.length === 1 ? 'it is' : 'they are'} listed in a table below the chart. ${aggregate ? 'Aggregate activity counts chat-author minutes per 1,000 viewer-minutes; it does not change the score.' : 'A zero median means at least half the eligible minutes had no chatters; chat can still be active in other minutes.'}`;
   container.appendChild(note);
-  if (aggregate && pts.length < data.points.filter((p) => (!lang || p.language === lang) && (!cat || p.game_name === cat)).length) {
+  if (aggregate && measured.length < data.points.filter((p) => (!lang || p.language === lang) && (!cat || p.game_name === cat)).length) {
     const missing = document.createElement('p');
     missing.className = 'muted small';
     missing.textContent = 'Streams without the newer activity summary are omitted from this view; their median measurements remain available.';
@@ -85,6 +102,7 @@ export function renderEngagementMap(container, data, lang, cat = '', metric = 'm
     ref.textContent = `Reference: ${fit.n} retained streams, using the latest measured stream per channel in this selection. Bands describe residual spread, not detection confidence.`;
     container.appendChild(ref);
   }
+  if (!pts.length) { appendZeroTable(); return; }
 
   const wrap = document.createElement('div');
   wrap.className = 'chart';
@@ -93,17 +111,15 @@ export function renderEngagementMap(container, data, lang, cat = '', metric = 'm
   const height = width < 600 ? 360 : 480;
   const m = { l: 52, r: 16, t: 12, b: 40 };
   const pw = width - m.l - m.r, ph = height - m.t - m.b;
-  const positiveHeight = ph - 42;
-  const zeroY = m.t + ph - 8;
-  const xs = pts.map((p) => p.median_viewers), ys = pts.map(rate).filter((v) => v > 0);
+  const positiveHeight = ph;
+  const xs = pts.map((p) => p.median_viewers), ys = pts.map(rate);
   const xlo = Math.min(...xs) / 1.25, xhi = Math.max(...xs) * 1.25;
-  const ylo = ys.length ? Math.min(...ys) / 1.5 : 0.1;
-  const yhi = ys.length ? Math.max(...ys) * 1.5 : 1;
+  const ylo = Math.min(...ys) / 1.5, yhi = Math.max(...ys) * 1.5;
   const x = (v) => m.l + ((Math.log10(v) - Math.log10(xlo)) / (Math.log10(xhi) - Math.log10(xlo))) * pw;
-  const y = (v) => v === 0 ? zeroY : m.t + positiveHeight - ((Math.log10(v) - Math.log10(ylo)) / (Math.log10(yhi) - Math.log10(ylo))) * positiveHeight;
+  const y = (v) => m.t + positiveHeight - ((Math.log10(v) - Math.log10(ylo)) / (Math.log10(yhi) - Math.log10(ylo))) * positiveHeight;
   const fitY = (v) => y(Math.max(ylo, v));
   const svg = makeSvg(wrap, width, height,
-    `Scatter of ${pts.length} streams: median viewers against ${aggregate ? 'chat-author minutes per 1,000 viewer-minutes' : 'median chatters per minute per 1,000 viewers'}, with a separate zero row below the positive log scale`);
+    `Scatter of ${pts.length} streams: median viewers against ${aggregate ? 'chat-author minutes per 1,000 viewer-minutes' : 'median chatters per minute per 1,000 viewers'}; streams with zero activity are listed in a table instead`);
   el('clipPath', { id: 'em-clip' }, el('defs', {}, svg)).appendChild(el('rect', { x: m.l, y: m.t, width: pw, height: positiveHeight }));
 
   const axis = el('g', { class: 'axis' }, svg);
@@ -119,9 +135,6 @@ export function renderEngagementMap(container, data, lang, cat = '', metric = 'm
   el('text', { x: m.l + pw / 2, y: height - 4, 'text-anchor': 'middle', class: 'axis-title' }, axis).textContent = 'Median concurrent viewers (log scale)';
   el('text', { x: 12, y: m.t + ph / 2, 'text-anchor': 'middle', class: 'axis-title', transform: `rotate(-90 12 ${m.t + ph / 2})` }, axis)
     .textContent = aggregate ? 'Chat-author min / 1k viewer-min' : 'Median chatters/min / 1k viewers';
-  el('line', { class: 'gridline', x1: m.l, x2: width - m.r, y1: zeroY - 14, y2: zeroY - 14 }, axis);
-  el('text', { x: m.l - 6, y: zeroY + 4, 'text-anchor': 'end' }, axis).textContent = '0';
-  el('text', { x: width - m.r, y: zeroY - 19, 'text-anchor': 'end', class: 'annot' }, axis).textContent = 'zero (outside log scale)';
 
   const expect = fit ? (v, k = 0) => Math.exp(fit.a + fit.slope * Math.log(v) + k * fit.sd) - 0.1 : null;
   if (fit) {
@@ -215,7 +228,7 @@ export function renderEngagementMap(container, data, lang, cat = '', metric = 'm
   });
 
   // Table view: the streams furthest below expected.
-  const low = pts.filter((p) => p.z != null).sort((a, b) => a.z - b.z).slice(0, 15);
+  const low = measured.filter((p) => p.z != null).sort((a, b) => a.z - b.z).slice(0, 15);
   const det = document.createElement('details');
   det.className = 'table-view';
   det.innerHTML = `<summary>Table: the ${low.length} streams furthest below the scorer’s median expectation</summary>
@@ -226,6 +239,7 @@ export function renderEngagementMap(container, data, lang, cat = '', metric = 'm
       <td class="r num">${engagementValue(p.expected_per_k)}</td><td class="r num">${dec(p.z)}</td><td class="r num">${q(p.quotient)}</td></tr>`).join('')}</tbody></table>`;
   container.appendChild(det);
   det.querySelectorAll('tbody tr').forEach((tr) => tr.addEventListener('click', () => { navigate(tr.dataset.href); }));
+  appendZeroTable();
 }
 
 // ---------- periodicity ----------
