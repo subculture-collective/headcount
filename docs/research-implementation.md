@@ -34,6 +34,17 @@ The workstation's inherited GOROOT points one directory above Homebrew's libexec
 
 The research CLI supports whole observed-stream episode labels. Finer account-cohort episodes cannot be reconstructed from existing per-stream summaries. Circular-shift and cohort comparisons remain diagnostics rather than newly weighted detectors. Isotonic calibration is an offline candidate with independent-test checks; no model is promoted to live scoring without reviewed evidence.
 
+## Evaluation round 1
+
+Frozen 2026-11-13 at 04:03 UTC from scorer version 11 (collector source `5308959`), with the research tool at main `1565742`. The case files are private and stay outside the repository. This section records the method only.
+
+- **Eligible streams.** Ended streams whose first sighting and latest evidence fall inside a single period. Latest evidence is the later of the last sighting and the final snapshot. Streams that started before November 10 were rescored on or after November 9. Their evidence time is the rescoring time, which breaks date-ordered splits, so they are excluded.
+- **Periods.** Development runs 2026-11-10 08:00 to 11-11 08:00 UTC; validation runs 11-11 08:00 to 11-12 08:00. On November 11, 08:00 UTC was when the fewest streams were live. Even so, 686 of 7,631 streams (9%) crossed a boundary and were excluded, so long streams are underrepresented.
+- **Channel partition.** A seeded hash assigns each channel to one of the four splits, so no channel can appear in two.
+- **Sample.** 30 channels per split, drawn at random from that split's eligible channels (750 for development, 739 for validation), then one eligible stream per channel. Each case records its inclusion probability. Four owner-nominated channels with an eligible stream were added to development as challenge cases. The fifth had none.
+- **Exports.** All 582 stored snapshots of the 64 selected streams, so the persistence study does not depend on database retention.
+- **Not done yet.** Two independent reviews per case. Calibration and test cases, which will come from later periods; the test set is drawn after the thresholds are frozen. Independently documented positive incidents, which are needed to measure missed detections.
+
 ## Owner-nominated controls follow-up
 
 Added a versioned creator roster with verified public Twitch IDs, unresolved-handle tracking, and a `control-cases` command. Nominations produce unreviewed challenge cases and cannot change a score or supply a class label. Nomination metadata is excluded from blinded packets. Regression tests cover those boundaries.
