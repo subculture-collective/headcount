@@ -213,3 +213,21 @@ func TestViewerPlateauFeedsAudienceMechanism(t *testing.T) {
 		t.Fatalf("a plateau alone must stay under the single-family cap, got %.1f", q)
 	}
 }
+
+func TestViewerPlateauIgnoresContextMinutesForChat(t *testing.T) {
+	// Silent chat during known collaboration or distribution context must
+	// not supply quiet-chat evidence for an eligible hold with lively chat.
+	n := 360
+	v, ch, ctx := constant(n, 2000), constant(n, 0), make([]bool, n)
+	for i := range n {
+		if i < 240 {
+			ctx[i] = true
+		} else {
+			ch[i] = 60 // 30 chatters per 1000 viewers
+		}
+	}
+	c := plateau(StreamData{Viewers: v, Chatters: ch, ChatHealthy: healthy(n), ContextMinutes: ctx})
+	if c.Strength != 0 {
+		t.Fatalf("context minutes supplied quiet-chat evidence: %.2f (%v)", c.Strength, c.Values)
+	}
+}

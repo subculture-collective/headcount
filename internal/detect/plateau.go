@@ -87,7 +87,13 @@ func plateauAt(d StreamData, v []float64, value float64, hold, from int) Compone
 	var ratios []float64
 	inHold := false
 	for i, x := range v {
+		// Context minutes are already explained; they must not count toward
+		// the ceiling share, the hold or its chat evidence.
 		if math.IsNaN(x) {
+			continue
+		}
+		if contextAt(d, i, i+1) {
+			inHold = false
 			continue
 		}
 		observed++
