@@ -155,6 +155,7 @@ func UnexplainedJumps(d StreamData, p Prepared) Component {
 		return false
 	}
 	var jumps, unexplained int
+	maxShift := 0.0
 	for i := 15; i < n-10; i++ {
 		if math.IsNaN(p.Viewers[i]) || math.IsNaN(p.Viewers[i-3]) || contextAt(d, i-5, i+10) {
 			continue
@@ -175,13 +176,14 @@ func UnexplainedJumps(d StreamData, p Prepared) Component {
 		jumps++
 		if !explained(i, delta) {
 			unexplained++
+			maxShift = math.Max(maxShift, math.Abs(after-before)/math.Max(before, after))
 		}
 		i += 5 // count one jump once
 	}
 	hours := float64(n) / 60
 	rate := float64(unexplained) / hours
 	return Component{Available: true, Strength: ramp(rate, 0.5, 3), Values: map[string]float64{
-		"jumps": float64(jumps), "unexplained": float64(unexplained), "per_hour": rate}}
+		"jumps": float64(jumps), "unexplained": float64(unexplained), "per_hour": rate, "max_unexplained_shift": maxShift}}
 }
 
 // SpikeChatLift asks whether chat grows when viewers spike. Each spike is
@@ -499,6 +501,7 @@ func AccountAgeComponent(chatters, newAccounts, missing int) Component {
 // Weights for combining components. They are hand-set and uncalibrated.
 var Weights = map[string]float64{
 	"periodic_spikes":     0.6,
+	"viewer_plateau":      0.6,
 	"synchronized_spikes": 0.5,
 	"spike_chat_lift":     0.5,
 	"chat_engagement":     0.5,
@@ -518,7 +521,7 @@ var Weights = map[string]float64{
 // dependency assumptions, not a claim of statistical independence.
 var Families = map[string]string{
 	"periodic_spikes": "audience", "synchronized_spikes": "audience",
-	"unexplained_jumps": "audience", "start_ramp": "audience",
+	"unexplained_jumps": "audience", "start_ramp": "audience", "viewer_plateau": "audience",
 	"spike_chat_lift": "audience", "spike_follow_lift": "audience",
 	"chat_engagement": "audience", "chat_repetition": "chat",
 	"chatter_accounts": "chat", "shared_accounts": "chat",

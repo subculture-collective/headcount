@@ -16,13 +16,14 @@ const COMPONENTS = {
   shared_accounts: ['Shared accounts', 'Chatters with accounts under 90 days old who also chatted in two or more other tracked channels that week'],
   follow_bursts: ['Follow bursts', 'Observed net-change intervals far above the stream’s usual follow rate'],
   unexplained_jumps: ['Unexplained jumps', 'Sharp viewer changes not explained by a raid or game change'],
+  viewer_plateau: ['Viewer plateau', 'Viewer count held at one exact value, with almost no minutes above it, while chat stays nearly silent; a display cap can look the same'],
   spike_follow_lift: ['Follows during spikes', 'Whether follows speed up when viewers spike'],
   chat_repetition: ['Chat repetition', 'Share of messages matching the top repeated non-command, non-utility text'],
   start_ramp: ['Start ramp', 'How fast viewers arrive after going live'],
 };
 
 const WEIGHTS = {
-  periodic_spikes: 0.6, synchronized_spikes: 0.5, spike_chat_lift: 0.5, chat_engagement: 0.5, follower_purge: 0.4, chatter_accounts: 0.4, shared_accounts: 0.4,
+  periodic_spikes: 0.6, viewer_plateau: 0.6, synchronized_spikes: 0.5, spike_chat_lift: 0.5, chat_engagement: 0.5, follower_purge: 0.4, chatter_accounts: 0.4, shared_accounts: 0.4,
   follow_bursts: 0.3, unexplained_jumps: 0.3, spike_follow_lift: 0.25, chat_repetition: 0.15, start_ramp: 0.1,
 };
 

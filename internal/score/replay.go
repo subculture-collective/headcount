@@ -50,6 +50,7 @@ func Evaluate(in Snapshot, omit []string) Result {
 		"periodic_spikes": detect.PeriodicSpikes(p), "unexplained_jumps": detect.UnexplainedJumps(d, p),
 		"spike_chat_lift": detect.SpikeChatLift(d, p), "spike_follow_lift": detect.SpikeFollowLift(d, p),
 		"chat_repetition": detect.ChatRepetition(d), "start_ramp": detect.StartRamp(d, p),
+		"viewer_plateau": detect.ViewerPlateau(d, p),
 	}
 	cs["follow_bursts"], cs["follower_purge"] = detect.FollowAnomalies(d)
 	own := eligibleOnsets(d, p)

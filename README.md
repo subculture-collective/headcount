@@ -64,6 +64,7 @@ Each detector rates one kind of evidence from 0 to 1:
 | Component | Weight | Evidence |
 |---|---|---|
 | `periodic_spikes` | 0.6 | Upward viewer spikes that repeat at a fixed period and return to baseline |
+| `viewer_plateau` | 0.6 | Viewer count held at one exact value of 100 or more, with almost no minutes above it, while chat stays nearly silent; evidence grows from 45 to 120 minutes of hold, is reduced without usable chat, and stands down during mostly restricted chat |
 | `synchronized_spikes` | 0.5 | Spikes that start in the same minutes as another channel's more often than chance (binomial test, Bonferroni-corrected; discounted when many channels spike together) |
 | `spike_chat_lift` | 0.5 | Chat does not grow when viewers spike, comparing each unexplained spike with the minutes just before it |
 | `chat_engagement` | 0.5 | Median chatters per minute per 1k viewers far below a peer baseline fitted on log(viewers), per language, adjusted for category |
@@ -76,8 +77,8 @@ Each detector rates one kind of evidence from 0 to 1:
 | `chat_repetition` | 0.15 | Share of chat matching the most repeated non-command message |
 | `start_ramp` | 0.1 | Viewers arrive implausibly fast after going live |
 
-Components that share a likely cause are grouped: audience shape, weak spike
-response and low engagement form an **audience** group; repetition and account
+Components that share a likely cause are grouped: audience shape (including
+held plateaus), weak spike response and low engagement form an **audience** group; repetition and account
 features form **chat**; net follower anomalies form **follows**. Each group
 contributes its strongest weighted component, and groups combine by noisy-OR,
 each capped at 0.3 plus the strongest other group. One group alone scores at

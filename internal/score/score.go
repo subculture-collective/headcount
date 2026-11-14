@@ -20,7 +20,12 @@ import (
 
 // Version increments whenever detector logic or weights change, so old
 // scores can be told apart and recomputed.
-const Version = 11
+const Version = 12
+
+// OnsetVersion tags stored spike onsets. It changes only when onset
+// eligibility changes, so a score-version bump keeps partner onsets usable
+// for synchrony while history is rescored.
+const OnsetVersion = 11
 
 const (
 	liveEvery       = 15 * time.Minute
@@ -334,7 +339,7 @@ func (s *Scorer) scoreStream(ctx context.Context, r store.StreamRef) error {
 	for i, m := range idx {
 		onsets[i] = store.Onset{TS: start.Add(time.Duration(m) * time.Minute), Rel: p.Rel[m]}
 	}
-	if err := s.store.ReplaceOnsets(ctx, r.ID, r.ChannelID, onsets, Version); err != nil {
+	if err := s.store.ReplaceOnsets(ctx, r.ID, r.ChannelID, onsets, OnsetVersion); err != nil {
 		return err
 	}
 	sc := store.Score{StreamID: r.ID, ChannelID: r.ChannelID, LastSeenAt: r.LastSeenAt, Version: Version, Minutes: len(d.Viewers), Quotient: output.Quotient, Confidence: output.Coverage, Final: r.Ended, Components: output.Components, Evidence: output.Evidence, Peer: output.Peer, Behavior: input.Behavior, SnapshotInput: input, SnapshotOutput: output, ObservedAt: input.ObservedAt}
@@ -423,7 +428,7 @@ func (s *Scorer) sharedNote(ctx context.Context, perChannel map[int64]int) (stri
 
 // synchronyPartners freezes currently available, version-matched partner onsets.
 func (s *Scorer) synchronyPartners(ctx context.Context, r store.StreamRef) ([]detect.Partner, error) {
-	rows, err := s.store.PartnerOnsets(ctx, r.ChannelID, r.FirstSeenAt, r.LastSeenAt, Version)
+	rows, err := s.store.PartnerOnsets(ctx, r.ChannelID, r.FirstSeenAt, r.LastSeenAt, OnsetVersion)
 	if err != nil {
 		return nil, err
 	}
